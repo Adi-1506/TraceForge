@@ -1,0 +1,97 @@
+"""Read-side helpers shared by the routers."""
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
+
+from server.models import Device, Event, Incident, IncidentEvent, Machine, RiskScore
+from server.schemas import AnomalyOut, DeviceDetailOut, DeviceOut, IncidentDetailOut, IncidentOut, TimelineEntry
+from server.scoring.risk import level_for
+
+
+def timeline_entries(events: list[Event]) -> list[TimelineEntry]:
+    return [
+        TimelineEntry(
+            event_id=e.id,
+            timestamp=e.timestamp,
+            event_type=e.event_type,
+            machine_hostname=e.machine.hostname,
+            risk_score=e.risk_score.score if e.risk_score else None,
+            risk_level=e.risk_score.level if e.risk_score else None,
+            anomalies=[AnomalyOut.model_validate(a) for a in e.anomalies],
+        )
+        for e in events
+    ]
+
+
+def device_events(db: Session, device_id: int) -> list[Event]:
+    return (
+        db.query(Event)
+        .options(joinedload(Event.machine), joinedload(Event.anomalies), joinedload(Event.risk_score))
+        .filter(Event.device_id == device_id)
+        .order_by(Event.timestamp, Event.id)
+        .all()
+    )
+
+
+def device_summary(db: Session, device: Device) -> DeviceOut:
+    count, last_seen, machines = db.query(
+        func.count(Event.id), func.max(Event.timestamp), func.count(func.distinct(Event.machine_id))
+    ).filter(Event.device_id == device.id).one()
+    connects = db.query(func.count(Event.id)).filter(Event.device_id == device.id, Event.event_type == "connect").scalar()
+    latest = db.query(RiskScore).filter(RiskScore.device_id == device.id).join(Event, Event.id == RiskScore.event_id).order_by(Event.timestamp.desc(), Event.id.desc()).first()
+    return DeviceOut(
+        id=device.id,
+        vendor_id=device.vendor_id,
+        product_id=device.product_id,
+        serial_number=device.serial_number,
+        device_type=device.device_type,
+        first_seen=device.first_seen,
+        last_seen=last_seen,
+        event_count=count,
+        machine_count=machines,
+        risk_score=latest.score if latest else None,
+        risk_level=latest.level if latest else None,
+        known=connects >= 2,
+    )
+
+
+def device_detail(db: Session, device: Device) -> DeviceDetailOut:
+    hostnames = [
+        h
+        for (h,) in db.query(Machine.hostname)
+        .join(Event, Event.machine_id == Machine.id)
+        .filter(Event.device_id == device.id)
+        .distinct()
+        .order_by(Machine.hostname)
+        .all()
+    ]
+    return DeviceDetailOut(**device_summary(db, device).model_dump(), descriptor_json=device.descriptor_json, machines=hostnames)
+
+
+def incident_summary(db: Session, inc: Incident) -> IncidentOut:
+    count = db.query(func.count(IncidentEvent.event_id)).filter(IncidentEvent.incident_id == inc.id).scalar()
+    d = inc.device
+    return IncidentOut(
+        id=inc.id,
+        device_id=inc.device_id,
+        device_label=f"{d.vendor_id}:{d.product_id} {d.device_type or ''}".strip(),
+        machine_hostname=inc.machine.hostname,
+        start_time=inc.start_time,
+        end_time=inc.end_time,
+        max_score=inc.max_score,
+        level=level_for(inc.max_score),
+        status=inc.status,
+        event_count=count,
+    )
+
+
+def incident_detail(db: Session, inc: Incident) -> IncidentDetailOut:
+    events = (
+        db.query(Event)
+        .options(joinedload(Event.machine), joinedload(Event.anomalies), joinedload(Event.risk_score))
+        .join(IncidentEvent, IncidentEvent.event_id == Event.id)
+        .filter(IncidentEvent.incident_id == inc.id)
+        .order_by(Event.timestamp, Event.id)
+        .all()
+    )
+    return IncidentDetailOut(**incident_summary(db, inc).model_dump(), timeline=timeline_entries(events))
