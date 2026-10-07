@@ -63,7 +63,7 @@ export default function App() {
         </section>
         <section className="pane detail">
           {tab === "devices" && deviceId && <DevicePanel deviceId={deviceId} />}
-          {tab === "incidents" && incidentId && <IncidentPanel incidentId={incidentId} onOpenDevice={openDevice} />}
+          {tab === "incidents" && incidentId && <IncidentPanel incidentId={incidentId} onOpenDevice={openDevice} onSelectIncident={setIncidentId} />}
           {((tab === "devices" && !deviceId) || (tab === "incidents" && !incidentId)) && (
             <div className="empty">Select {tab === "devices" ? "a device" : "an incident"} to investigate.</div>
           )}

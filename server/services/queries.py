@@ -68,6 +68,12 @@ def device_detail(db: Session, device: Device) -> DeviceDetailOut:
     return DeviceDetailOut(**device_summary(db, device).model_dump(), descriptor_json=device.descriptor_json, machines=hostnames)
 
 
+def case_members(db: Session, inc: Incident) -> list[Incident]:
+    if inc.case_id is None:
+        return []
+    return db.query(Incident).filter(Incident.case_id == inc.case_id).order_by(Incident.start_time, Incident.id).all()
+
+
 def incident_summary(db: Session, inc: Incident) -> IncidentOut:
     count = db.query(func.count(IncidentEvent.event_id)).filter(IncidentEvent.incident_id == inc.id).scalar()
     d = inc.device
@@ -82,6 +88,9 @@ def incident_summary(db: Session, inc: Incident) -> IncidentOut:
         level=level_for(inc.max_score),
         status=inc.status,
         event_count=count,
+        case_id=inc.case_id,
+        case_reason=inc.case_reason,
+        case_machines=sorted({m.machine.hostname for m in case_members(db, inc)}),
     )
 
 
@@ -94,4 +103,5 @@ def incident_detail(db: Session, inc: Incident) -> IncidentDetailOut:
         .order_by(Event.timestamp, Event.id)
         .all()
     )
-    return IncidentDetailOut(**incident_summary(db, inc).model_dump(), timeline=timeline_entries(events))
+    related = [incident_summary(db, m) for m in case_members(db, inc) if m.id != inc.id]
+    return IncidentDetailOut(**incident_summary(db, inc).model_dump(), timeline=timeline_entries(events), related=related)

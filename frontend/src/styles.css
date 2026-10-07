@@ -298,6 +298,11 @@ body {
   color: var(--accent);
   background: var(--row-selected);
 }
+.chip-case {
+  margin-top: 4px;
+  color: var(--critical);
+  background: var(--critical-bg);
+}
 
 .card-section {
   padding: 16px 18px;

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from server.detection import ml_model
+from server.detection import fingerprint, ml_model
 from server.detection.rules import run_rules
 from server.incidents.correlate import correlate
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
@@ -41,6 +41,11 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
         .first()
     )
     if device is not None:
+        # An upgraded agent may report fields the first sighting lacked; the first value seen becomes the profile.
+        recorded = device.descriptor_json or {}
+        missing = {k: v for k, v in (payload.descriptor or {}).items() if k not in recorded}
+        if missing:
+            device.descriptor_json = {**recorded, **missing}
         return device, False
 
     device = Device(
@@ -56,6 +61,7 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
 
 
 def process_event(db: Session, payload: EventIngest) -> IngestOutcome:
+    payload = payload.model_copy(update={"descriptor": fingerprint.enrich(payload.descriptor)})
     machine = get_or_create_machine(db, payload.machine_hostname)
     device, is_new_device = get_or_create_device(db, payload)
 

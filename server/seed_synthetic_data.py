@@ -11,16 +11,49 @@ import argparse
 import random
 from datetime import datetime, timedelta, timezone
 
-from server.database import Base, SessionLocal, engine
+from server.database import Base, SessionLocal, engine, upgrade_schema
 from server.detection import ml_model
 from server.schemas import EventIngest
 from server.services.ingest import process_event
 
-HID = {"pnp_class": "HIDClass", "service": "HidUsb", "interface_classes": [3], "endpoint_count": 2}
-MASS = {"pnp_class": "USB", "service": "USBSTOR", "interface_classes": [8], "endpoint_count": 2}
-VIDEO = {"pnp_class": "Camera", "service": "usbvideo", "interface_classes": [14, 14], "endpoint_count": 3}
-PRINT = {"pnp_class": "USB", "service": "usbprint", "interface_classes": [7], "endpoint_count": 2}
-MODEM = {"pnp_class": "USB", "service": "usbccgp", "interface_classes": [2, 10], "endpoint_count": 5}
+
+def ep(direction, kind, size):
+    return {"direction": direction, "transfer_type": kind, "max_packet_size": size}
+
+
+def iface(n, cls, sub, proto, *endpoints):
+    return {"interface_number": n, "interface_class": cls, "interface_subclass": sub, "interface_protocol": proto, "endpoints": list(endpoints)}
+
+
+def desc(pnp_class, service, bcd_usb, *interfaces, max_packet_size0=64):
+    """Descriptor in the shape the live agent reports (the server derives fingerprint and summary fields)."""
+    return {
+        "pnp_class": pnp_class,
+        "service": service,
+        "bcd_usb": bcd_usb,
+        "device_class": 0,
+        "device_subclass": 0,
+        "device_protocol": 0,
+        "max_packet_size0": max_packet_size0,
+        "num_configurations": 1,
+        "interfaces": list(interfaces),
+    }
+
+
+HID = desc("HIDClass", "HidUsb", "0200", iface(0, 3, 1, 2, ep("in", "interrupt", 8)), max_packet_size0=8)
+MASS = desc("USB", "USBSTOR", "0210", iface(0, 8, 6, 80, ep("in", "bulk", 512), ep("out", "bulk", 512)))
+VIDEO = desc("Camera", "usbvideo", "0200", iface(0, 14, 1, 0, ep("in", "interrupt", 16)), iface(1, 14, 2, 0, ep("in", "isochronous", 1024), ep("in", "isochronous", 512)))
+PRINT = desc("USB", "usbprint", "0200", iface(0, 7, 1, 2, ep("out", "bulk", 64), ep("in", "bulk", 64)))
+MODEM = desc("USB", "usbccgp", "0200", iface(0, 2, 2, 1, ep("in", "interrupt", 16)), iface(1, 10, 0, 0, ep("in", "bulk", 512), ep("out", "bulk", 512)))
+# Same identity as a SanDisk drive, but the board also exposes a keyboard (a Rubber Ducky style clone).
+MASS_PLUS_KEYBOARD = desc(
+    "USB", "USBSTOR", "0210",
+    iface(0, 8, 6, 80, ep("in", "bulk", 512), ep("out", "bulk", 512)),
+    iface(1, 3, 1, 1, ep("in", "interrupt", 8)),
+)
+
+# Typical enumeration time (ms) per descriptor, as the live agent measures it.
+ENUM_MS = {id(HID): 40, id(MASS): 120, id(VIDEO): 260, id(PRINT): 90, id(MODEM): 180, id(MASS_PLUS_KEYBOARD): 140}
 
 INPUT, STORAGE = "USB Input Device", "USB Mass Storage Device"
 
@@ -51,8 +84,18 @@ BASELINE = {
 }
 
 
-def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", vid=None, pid=None):
+def enumeration_for(descriptor, rng=None, ms=None, order=None):
+    classes = [i["interface_class"] for i in descriptor["interfaces"]]
+    base = ENUM_MS.get(id(descriptor), 100)
+    return {
+        "interface_order": order or classes,
+        "duration_ms": ms if ms is not None else round(base * (rng.uniform(0.8, 1.25) if rng else 1.0), 1),
+    }
+
+
+def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", vid=None, pid=None, rng=None, enum_ms=None, enum_order=None):
     v, p, s, t, d = D[dev] if isinstance(dev, str) else dev
+    d = d if descriptor == "keep" else descriptor
     return EventIngest(
         machine_hostname=machine,
         vendor_id=vid or v,
@@ -61,7 +104,8 @@ def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", v
         device_type=t if dtype == "keep" else dtype,
         event_type=kind,
         timestamp=ts,
-        descriptor=d if descriptor == "keep" else descriptor,
+        descriptor=d,
+        enumeration=enumeration_for(d, rng, enum_ms, enum_order) if kind == "connect" else None,
     )
 
 
@@ -78,7 +122,7 @@ def baseline_events(rng: random.Random, today: datetime) -> list[EventIngest]:
                 machine = machines[0] if rng.random() < 0.8 else rng.choice(machines)
                 start = date.replace(hour=rng.randint(9, 16), minute=rng.randint(0, 59), second=rng.randint(0, 59))
                 end = start + timedelta(minutes=rng.randint(10, 150))
-                out += [ev(machine, name, "connect", start), ev(machine, name, "disconnect", end)]
+                out += [ev(machine, name, "connect", start, rng=rng), ev(machine, name, "disconnect", end)]
     return sorted(out, key=lambda e: e.timestamp)
 
 
@@ -109,6 +153,27 @@ def attack_events(today: datetime) -> list[tuple[str, list[EventIngest]]]:
             [ev("LAB-PC-04", ("0781", "5581", None, STORAGE, MASS), "connect", at(16, 45))],
         ),
         (
+            "F. Cross-machine spread: the type-switching Kingston moves on to LAB-PC-04 twenty minutes later",
+            [
+                ev("LAB-PC-04", "kingston", "connect", at(3, 32), dtype=INPUT, descriptor=HID),
+                ev("LAB-PC-04", "kingston", "disconnect", at(3, 33), dtype=INPUT, descriptor=HID),
+            ],
+        ),
+        (
+            "G. Model clone: a new 'SanDisk 0781:5581' with a plausible serial whose descriptor adds a keyboard interface",
+            [
+                ev("LAB-PC-03", ("0781", "5581", "4C530001240516", STORAGE, MASS_PLUS_KEYBOARD), "connect", at(15, 2)),
+                ev("LAB-PC-03", ("0781", "5581", "4C530001240516", STORAGE, MASS_PLUS_KEYBOARD), "disconnect", at(15, 9)),
+            ],
+        ),
+        (
+            "H. Enumeration drift (no rule fires): the known phone enumerates 20x slower with its interfaces in reverse order",
+            [
+                ev("ADMIN-LAPTOP", "phone", "connect", at(13, 15), enum_ms=3600, enum_order=[10, 2]),
+                ev("ADMIN-LAPTOP", "phone", "disconnect", at(13, 50)),
+            ],
+        ),
+        (
             "E. Plain unknown device, otherwise consistent",
             [
                 ev("ADMIN-LAPTOP", ("045E", "07A5", "ZZ99FF31", INPUT, HID), "connect", at(11, 30)),
@@ -129,6 +194,7 @@ def main() -> None:
         ml_model.MODEL_PATH.unlink(missing_ok=True)
         ml_model._bundle = None
     Base.metadata.create_all(bind=engine)
+    upgrade_schema()
 
     rng = random.Random(args.seed)
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)

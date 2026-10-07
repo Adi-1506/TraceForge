@@ -16,6 +16,8 @@ class EventIngest(BaseModel):
     event_type: str  # "connect" | "disconnect"
     timestamp: datetime | None = None
     descriptor: dict | None = None
+    # How the device enumerated: {"interface_order": [class codes in arrival order], "duration_ms": float}
+    enumeration: dict | None = None
 
 
 class EventOut(ORM):
@@ -94,10 +96,14 @@ class IncidentOut(BaseModel):
     level: str
     status: str
     event_count: int
+    case_id: int | None = None
+    case_reason: str | None = None
+    case_machines: list[str] = []  # every machine in this incident's cross-machine case
 
 
 class IncidentDetailOut(IncidentOut):
     timeline: list[TimelineEntry]
+    related: list[IncidentOut] = []  # the other incidents in the same case
 
 
 class StatsOut(BaseModel):

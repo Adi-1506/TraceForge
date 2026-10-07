@@ -4,13 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server import models  # noqa: F401  (registers tables on Base.metadata)
-from server.database import Base, engine
+from server.database import Base, engine, upgrade_schema
 from server.routers import anomalies, devices, events, incidents, risk, system
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    upgrade_schema()
     yield
 
 

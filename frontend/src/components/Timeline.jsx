@@ -22,7 +22,7 @@ function Anomaly({ a }) {
   return (
     <div className={`anomaly anomaly-${a.source}`}>
       <div className="anomaly-head">
-        <span className={`chip chip-${a.source}`}>{a.source === "ml" ? "ML · SHAP" : "rule"}</span>
+        <span className={`chip chip-${a.source}`}>{a.source === "ml" ? (a.detail?.drivers ? "ML · SHAP" : "ML") : "rule"}</span>
         <span className="mono">{a.name}</span>
         <span className="muted">+{a.weight}</span>
       </div>
