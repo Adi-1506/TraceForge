@@ -6,6 +6,7 @@ from server.database import get_db
 from server.detection import ml_model
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import StatsOut
+from server.security import require_api_key
 
 router = APIRouter(tags=["system"])
 
@@ -31,7 +32,7 @@ def ml_status():
     return ml_model.status()
 
 
-@router.post("/ml/train")
+@router.post("/ml/train", dependencies=[Depends(require_api_key)])
 def ml_train(db: Session = Depends(get_db)):
     try:
         return ml_model.train(db)

@@ -109,7 +109,7 @@ def test_ml_flags_behavioural_outlier_with_shap_explanation(client):
         if "behavioural_outlier" in anomaly_names(client, out["event"]["device_id"]):
             flagged = out
     assert flagged is not None
-    ml = [a for a in client.get("/anomalies", params={"source": "ml"}).json()][0]
+    ml = [a for a in client.get("/anomalies", params={"source": "ml"}).json() if a["name"] == "behavioural_outlier"][0]
     assert ml["detail"]["drivers"], "SHAP drivers should be reported"
     assert "SHAP" in ml["explanation"]
 

@@ -26,6 +26,47 @@ function RiskBreakdown({ history }) {
   );
 }
 
+function DescriptorSection({ descriptor }) {
+  if (!descriptor) return null;
+  const interfaces = descriptor.interfaces || [];
+  return (
+    <div className="card-section">
+      <h3>USB descriptor profile</h3>
+      <div className="meta">
+        {descriptor.fingerprint ? (
+          <span>
+            fingerprint <span className="mono">{descriptor.fingerprint}</span>
+          </span>
+        ) : (
+          <span className="muted">no structural fingerprint (agent could not read the descriptor tree)</span>
+        )}
+        {descriptor.bcd_usb && <span className="mono">USB {descriptor.bcd_usb}</span>}
+        {descriptor.pnp_class && <span className="mono">{descriptor.pnp_class}</span>}
+        {descriptor.service && <span className="mono">{descriptor.service}</span>}
+      </div>
+      {interfaces.length > 0 && (
+        <ul className="factors">
+          {interfaces.map((i, n) => (
+            <li key={n}>
+              <span className="factor-weight mono">#{i.interface_number ?? n}</span>
+              <div>
+                <div className="mono">
+                  class 0x{Number(i.interface_class).toString(16).padStart(2, "0")} / sub {i.interface_subclass} / proto{" "}
+                  {i.interface_protocol}
+                </div>
+                <div className="muted small mono">
+                  {(i.endpoints || []).map((e) => `${e.direction} ${e.transfer_type} ${e.max_packet_size}B`).join(" · ") ||
+                    "no endpoints"}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function DevicePanel({ deviceId }) {
   const device = usePolling(() => api.device(deviceId), deviceId);
   const timeline = usePolling(() => api.timeline(deviceId), deviceId);
@@ -48,6 +89,7 @@ export default function DevicePanel({ deviceId }) {
         </div>
       )}
       <RiskBreakdown history={risk.data} />
+      <DescriptorSection descriptor={d?.descriptor_json} />
       <div className="card-section">
         <h3>Timeline</h3>
         <Timeline entries={timeline.data} />

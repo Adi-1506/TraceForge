@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from server.models import Device, Event, Machine
 
-# Descriptor fields that must stay stable for a given physical device.
-DESCRIPTOR_FIELDS = ("pnp_class", "service", "interface_classes", "endpoint_count")
+# Descriptor fields that must stay stable for a given physical device. The fingerprint
+# covers the full interface/endpoint tree when the agent can read it (see fingerprint.py).
+DESCRIPTOR_FIELDS = ("fingerprint", "pnp_class", "service", "interface_classes", "endpoint_count")
 
 
 @dataclass
@@ -145,6 +146,31 @@ def check_descriptor_mismatch(device: Device, payload, **_) -> list[Finding]:
     ]
 
 
+def check_descriptor_model_mismatch(db: Session, device: Device, payload, is_new_device: bool, **_) -> list[Finding]:
+    """A new unit whose descriptor structure matches no known unit of the model it claims to be."""
+    current = (payload.descriptor or {}).get("fingerprint")
+    if not is_new_device or not current:
+        return []
+    siblings = (
+        db.query(Device)
+        .filter(Device.vendor_id == device.vendor_id, Device.product_id == device.product_id, Device.id != device.id)
+        .all()
+    )
+    known = {(s.descriptor_json or {}).get("fingerprint") for s in siblings} - {None}
+    if not known or current in known:
+        return []
+    return [
+        Finding(
+            "rule",
+            "descriptor_model_mismatch",
+            35,
+            f"Descriptor structure does not match any known {device.vendor_id}:{device.product_id} unit "
+            f"(fingerprint {current}, expected one of {', '.join(sorted(known))}).",
+            {"fingerprint": current, "known_fingerprints": sorted(known)},
+        )
+    ]
+
+
 def check_new_machine(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
     if is_new_device:
         return []
@@ -171,6 +197,7 @@ RULES = [
     check_serial_reuse,
     check_serial_format,
     check_descriptor_mismatch,
+    check_descriptor_model_mismatch,
     check_new_machine,
 ]
 

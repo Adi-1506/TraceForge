@@ -1,3 +1,6 @@
+# Full stack:   docker compose up -d --build
+# Demo data:    docker compose run --rm server python -m server.seed_synthetic_data --reset
+# Dashboard at http://localhost:5173, API at http://localhost:8000/docs
 services:
   db:
     image: postgres:16
@@ -17,5 +20,36 @@ services:
       timeout: 5s
       retries: 10
 
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: traceforge-server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://traceforge:traceforge@db:5432/traceforge
+      # Agents must send this as X-API-Key. Override it in .env (API_KEY=...) for anything beyond a demo.
+      API_KEY: ${API_KEY:-change-me}
+    ports:
+      - "8000:8000"
+    volumes:
+      - traceforge_models:/app/server/model_artifacts
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    container_name: traceforge-dashboard
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - server
+
 volumes:
   traceforge_pgdata:
+  traceforge_models:
