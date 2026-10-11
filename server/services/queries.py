@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from server import integrity
 from server.detection.mitre import techniques_for_all
 from server.models import Anomaly, Device, Event, Incident, IncidentEvent, Machine, RiskScore
 from server.schemas import (
@@ -30,6 +31,7 @@ def timeline_entries(events: list[Event]) -> list[TimelineEntry]:
             risk_score=e.risk_score.score if e.risk_score else None,
             risk_level=e.risk_score.level if e.risk_score else None,
             anomalies=[AnomalyOut.model_validate(a) for a in e.anomalies],
+            record_hash=e.record_hash,
         )
         for e in events
     ]
@@ -183,6 +185,7 @@ def device_forensic_report(db: Session, device: Device) -> ForensicReportOut:
     return ForensicReportOut(
         report_id=report_id,
         generated_at=now_utc,
+        evidence_integrity=integrity.verify(db),
         device=detail,
         risk_history=[RiskOut.model_validate(r) for r in risk_scores],
         timeline=timeline,

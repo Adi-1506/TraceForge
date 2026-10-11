@@ -175,3 +175,73 @@ def test_trust_override_is_validated(client):
     post(client)
     assert client.put("/devices/1/trust", json={"status": "maybe"}).status_code == 422
     assert client.put("/devices/999/trust", json={"status": "trusted"}).status_code == 404
+
+
+# --- tamper-evident evidence chain ----------------------------------------------------------------
+
+
+def test_evidence_chain_is_intact_after_normal_ingestion(client):
+    for day in range(1, 4):
+        post(client, ts=f"2026-09-0{day}T10:00:00Z")
+    r = client.get("/integrity/verify").json()
+    assert r["intact"] is True and r["events_checked"] == 3 and len(r["chain_head"]) == 64
+
+
+def test_editing_a_stored_event_is_detected(client):
+    from server.database import SessionLocal
+    from server.models import Event
+
+    for day in range(1, 4):
+        post(client, ts=f"2026-09-0{day}T10:00:00Z")
+    with SessionLocal() as db:
+        e = db.get(Event, 2)
+        e.raw_payload = {**e.raw_payload, "machine_hostname": "SOMEWHERE-ELSE"}
+        db.commit()
+    r = client.get("/integrity/verify").json()
+    assert r["intact"] is False and r["first_broken_event_id"] == 2
+    assert "modified" in r["problem"]
+
+
+def test_deleting_a_stored_event_is_detected(client):
+    from server.database import SessionLocal
+    from server.models import Event, RiskScore, Anomaly
+
+    for day in range(1, 4):
+        post(client, ts=f"2026-09-0{day}T10:00:00Z")
+    with SessionLocal() as db:
+        db.query(Anomaly).filter(Anomaly.event_id == 2).delete()
+        db.query(RiskScore).filter(RiskScore.event_id == 2).delete()
+        db.query(Event).filter(Event.id == 2).delete()
+        db.commit()
+    r = client.get("/integrity/verify").json()
+    assert r["intact"] is False and r["first_broken_event_id"] == 3
+    assert "deleted" in r["problem"]
+
+
+def test_events_stored_before_the_chain_existed_are_backfilled(client):
+    from server import integrity
+    from server.database import SessionLocal
+    from server.models import Event
+
+    post(client)
+    post(client, ts="2026-09-02T10:00:00Z")
+    with SessionLocal() as db:
+        db.query(Event).update({Event.prev_hash: None, Event.record_hash: None})
+        db.commit()
+        assert integrity.backfill(db) == 2
+    assert client.get("/integrity/verify").json()["intact"] is True
+
+
+def test_forensic_export_carries_event_hashes_and_its_own_sha256(client):
+    import hashlib
+
+    out = post(client)
+    r = client.get(f"/devices/{out['event']['device_id']}/export")
+    assert r.headers["X-Content-SHA256"] == hashlib.sha256(r.content).hexdigest()
+    report = r.json()
+    assert report["evidence_integrity"]["intact"] is True
+    assert len(report["timeline"][0]["record_hash"]) == 64
+
+    csv = client.get(f"/devices/{out['event']['device_id']}/export", params={"format": "csv"})
+    assert csv.headers["X-Content-SHA256"] == hashlib.sha256(csv.content).hexdigest()
+    assert "Evidence Hash" in csv.text.splitlines()[0]

@@ -76,6 +76,7 @@ class TimelineEntry(BaseModel):
     risk_score: float | None = None
     risk_level: str | None = None
     anomalies: list[AnomalyOut] = []
+    record_hash: str | None = None  # this event's link in the evidence chain
 
 
 class DeviceOut(BaseModel):
@@ -147,9 +148,18 @@ class StatsOut(BaseModel):
     ml_trained: bool
 
 
+class IntegrityOut(BaseModel):
+    intact: bool
+    events_checked: int
+    chain_head: str
+    first_broken_event_id: int | None = None
+    problem: str | None = None
+
+
 class ForensicReportOut(BaseModel):
     report_id: str
     generated_at: UTCDatetime
+    evidence_integrity: IntegrityOut  # state of the whole evidence chain when the report was made
     device: DeviceDetailOut
     risk_history: list[RiskOut]
     timeline: list[TimelineEntry]

@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 from datetime import datetime, timezone
 from typing import Literal
@@ -94,7 +95,7 @@ def export_device_forensic_report(
     if format == "csv":
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Event ID", "Timestamp (UTC)", "Event Type", "Machine", "Risk Score", "Risk Level", "Anomalies Flagged"])
+        writer.writerow(["Event ID", "Timestamp (UTC)", "Event Type", "Machine", "Risk Score", "Risk Level", "Anomalies Flagged", "Evidence Hash"])
         for entry in report.timeline:
             anomaly_str = "; ".join(f"{a.name}: {a.explanation}" for a in entry.anomalies)
             writer.writerow([
@@ -105,13 +106,25 @@ def export_device_forensic_report(
                 entry.risk_score if entry.risk_score is not None else "",
                 entry.risk_level or "",
                 anomaly_str,
+                entry.record_hash or "",
             ])
 
         filename = f"forensic_report_{device.vendor_id}_{device.product_id}_{device_id}.csv"
-        return Response(
-            content=output.getvalue(),
-            media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+        return _signed(output.getvalue(), "text/csv", filename)
 
-    return report
+    filename = f"forensic_report_{device.vendor_id}_{device.product_id}_{device_id}.json"
+    return _signed(report.model_dump_json(indent=2), "application/json", filename)
+
+
+def _signed(content: str, media_type: str, filename: str) -> Response:
+    """The SHA-256 of the exact bytes sent, so a saved copy of the report can be checked later."""
+    body = content.encode()
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-SHA256": hashlib.sha256(body).hexdigest(),
+            "Access-Control-Expose-Headers": "X-Content-SHA256",
+        },
+    )

@@ -58,6 +58,9 @@ class Event(Base):
     event_type: Mapped[str] = mapped_column(String)  # "connect" | "disconnect"
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Tamper-evident evidence chain (see server/integrity.py).
+    prev_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    record_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     device: Mapped["Device"] = relationship(back_populates="events")
     machine: Mapped["Machine"] = relationship(back_populates="events")

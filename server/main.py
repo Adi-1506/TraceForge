@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from server import models  # noqa: F401  (registers tables on Base.metadata)
+from server import integrity, models  # noqa: F401  (models registers tables on Base.metadata)
 from server.config import settings
-from server.database import Base, engine, upgrade_schema
-from server.routers import anomalies, devices, events, incidents, risk, system
+from server.database import Base, SessionLocal, engine, upgrade_schema
+from server.routers import anomalies, devices, events, evidence, incidents, risk, system
 from server.scheduler import retrain_loop
 
 
@@ -15,6 +15,8 @@ from server.scheduler import retrain_loop
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     upgrade_schema()
+    with SessionLocal() as db:
+        integrity.backfill(db)  # events stored before the evidence chain existed
     task = asyncio.create_task(retrain_loop()) if settings.retrain_interval_hours > 0 else None
     yield
     if task is not None:
@@ -32,7 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (events, devices, anomalies, risk, incidents, system):
+for r in (events, devices, anomalies, risk, incidents, system, evidence):
     app.include_router(r.router)
 
 
