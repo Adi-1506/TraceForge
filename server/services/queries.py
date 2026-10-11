@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from server.models import Device, Event, Incident, IncidentEvent, Machine, RiskScore
+from server.detection.mitre import techniques_for_all
+from server.models import Anomaly, Device, Event, Incident, IncidentEvent, Machine, RiskScore
 from server.schemas import (
     AnomalyOut,
     DeviceDetailOut,
@@ -95,6 +96,15 @@ def incident_summary(db: Session, inc: Incident) -> IncidentOut:
     )
     count = db.query(func.count(IncidentEvent.event_id)).filter(IncidentEvent.incident_id == inc.id).scalar()
     label = lambda d: f"{d.vendor_id}:{d.product_id} {d.device_type or ''}".strip()
+    finding_names = [
+        n
+        for (n,) in db.query(Anomaly.name)
+        .join(IncidentEvent, IncidentEvent.event_id == Anomaly.event_id)
+        .filter(IncidentEvent.incident_id == inc.id)
+        .distinct()
+        .all()
+    ]
+    case_machines = sorted({m.machine.hostname for m in case_members(db, inc)})
     return IncidentOut(
         id=inc.id,
         device_id=inc.device_id,
@@ -110,7 +120,8 @@ def incident_summary(db: Session, inc: Incident) -> IncidentOut:
         event_count=count,
         case_id=inc.case_id,
         case_reason=inc.case_reason,
-        case_machines=sorted({m.machine.hostname for m in case_members(db, inc)}),
+        case_machines=case_machines,
+        mitre=techniques_for_all(finding_names, cross_machine=len(case_machines) > 1),
     )
 
 

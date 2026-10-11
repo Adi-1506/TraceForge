@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field
+
+from server.detection.mitre import techniques_for
 
 from server.timeutil import as_utc
 
@@ -50,6 +52,11 @@ class AnomalyOut(ORM):
     weight: float
     explanation: str
     detail: dict | None = None
+
+    @computed_field
+    @property
+    def mitre(self) -> list[dict]:
+        return techniques_for(self.name)
 
 
 class RiskOut(ORM):
@@ -107,6 +114,7 @@ class IncidentOut(BaseModel):
     case_id: int | None = None
     case_reason: str | None = None
     case_machines: list[str] = []  # every machine in this incident's cross-machine case
+    mitre: list[dict] = []  # ATT&CK techniques behind this incident's findings
 
 
 class IncidentUpdate(BaseModel):

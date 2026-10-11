@@ -4,6 +4,8 @@ from pathlib import Path
 
 _tmp = Path(tempfile.mkdtemp(prefix="traceforge-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{(_tmp / 'test.db').as_posix()}"
+# Environment variables win over .env, so a developer's local API key does not leak into the tests.
+os.environ["API_KEY"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
