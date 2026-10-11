@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +11,10 @@ class Settings(BaseSettings):
     api_key: str | None = None
     # Storage is always UTC; this zone defines "night" for the ML hour-of-day feature and the seeder.
     timezone: str = "Asia/Kolkata"
+    # Behavioural model: Isolation Forest (default) or One-Class SVM.
+    ml_algorithm: Literal["iforest", "ocsvm"] = "iforest"
+    # Retrain the model on stored history every N hours; 0 turns scheduled retraining off.
+    retrain_interval_hours: float = 0
 
 
 settings = Settings()

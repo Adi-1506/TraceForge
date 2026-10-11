@@ -1,18 +1,26 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server import models  # noqa: F401  (registers tables on Base.metadata)
+from server.config import settings
 from server.database import Base, engine, upgrade_schema
 from server.routers import anomalies, devices, events, incidents, risk, system
+from server.scheduler import retrain_loop
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     upgrade_schema()
+    task = asyncio.create_task(retrain_loop()) if settings.retrain_interval_hours > 0 else None
     yield
+    if task is not None:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="TraceForge", lifespan=lifespan)

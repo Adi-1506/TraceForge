@@ -64,3 +64,55 @@ def test_incident_rolls_up_techniques_and_a_case_adds_lateral_movement(client):
     hop = post(client, machine="PC-2", dtype="USB Input Device", descriptor=HID, ts="2026-09-02T03:10:00Z")
     ids = [t["id"] for t in client.get(f"/incidents/{hop['incident_id']}").json()["mitre"]]
     assert "T1091" in ids
+
+
+# --- ML: One-Class SVM, attack-free training, scheduled retraining --------------------------------
+
+
+def daily_history(client, days=40):
+    for day in range(days):
+        month, dom = (8, day + 1) if day < 31 else (9, day - 30)
+        post(client, ts=f"2026-{month:02d}-{dom:02d}T{9 + day % 4:02d}:{(day * 7) % 60:02d}:00Z")
+
+
+def test_one_class_svm_detects_and_explains_with_shap(client, monkeypatch):
+    from server.config import settings
+
+    monkeypatch.setattr(settings, "ml_algorithm", "ocsvm")
+    daily_history(client)
+    status = client.post("/ml/train").json()
+    assert status["trained"] and status["algorithm"] == "ocsvm"
+
+    flagged = [post(client, ts=f"2026-09-20T21:30:{i * 10:02d}Z") for i in range(6)]
+    ml = [a for a in client.get("/anomalies", params={"source": "ml"}).json() if a["name"] == "behavioural_outlier"]
+    assert flagged and ml, "the burst at 03:00 local time should be an outlier"
+    assert ml[0]["detail"]["algorithm"] == "ocsvm"
+    assert ml[0]["detail"]["drivers"], "SHAP drivers should be reported for the One-Class SVM too"
+
+
+def test_switching_algorithm_ignores_the_model_trained_with_the_other(client, monkeypatch):
+    from server.config import settings
+
+    daily_history(client)
+    assert client.post("/ml/train").json()["algorithm"] == "iforest"
+    monkeypatch.setattr(settings, "ml_algorithm", "ocsvm")
+    assert client.get("/ml/status").json()["trained"] is False
+
+
+def test_connections_in_incidents_are_left_out_of_training(client):
+    daily_history(client)
+    post(client, dtype="USB Input Device", descriptor=HID, ts="2026-09-20T03:00:00Z")  # opens an incident
+    status = client.post("/ml/train").json()
+    assert status["excluded_rows"] == 1
+    assert status["training_rows"] == 40
+    assert status["trained_at"]
+
+
+def test_scheduled_retraining_trains_once_there_is_enough_history(client):
+    from server.scheduler import retrain_once
+
+    post(client)
+    assert retrain_once() is None  # not enough history: skipped, not an error
+    daily_history(client)
+    assert retrain_once()["trained"] is True
+    assert client.get("/ml/status").json()["trained"] is True
