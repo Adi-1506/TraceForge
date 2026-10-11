@@ -230,6 +230,13 @@ def check_programmable_hid_board(device: Device, payload, **_) -> list[Finding]:
     ]
 
 
+def check_blocklisted(device: Device, **_) -> list[Finding]:
+    if device.trust_status != "blocklisted":
+        return []
+    note = f" ({device.trust_note})" if device.trust_note else ""
+    return [Finding("rule", "blocklisted_device", 60, f"This device was blocklisted by an investigator{note}.")]
+
+
 def check_new_machine(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
     if is_new_device:
         return []
@@ -259,12 +266,19 @@ RULES = [
     check_descriptor_model_mismatch,
     check_same_model_new_serial,
     check_programmable_hid_board,
+    check_blocklisted,
     check_new_machine,
 ]
+
+# An allowlisted (trusted) device may roam between machines; identity, descriptor and behaviour
+# checks still apply, so a clone of a trusted device is still caught.
+SILENCED_WHEN_TRUSTED = {"new_source_machine"}
 
 
 def run_rules(db: Session, **ctx) -> list[Finding]:
     findings: list[Finding] = []
     for rule in RULES:
         findings.extend(rule(db=db, **ctx))
+    if ctx["device"].trust_status == "trusted":
+        findings = [f for f in findings if f.name not in SILENCED_WHEN_TRUSTED]
     return findings

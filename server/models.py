@@ -41,6 +41,10 @@ class Device(Base):
     device_type: Mapped[str | None] = mapped_column(String, nullable=True)
     descriptor_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Investigator override of the computed trust: auto | trusted (allowlist) | blocklisted.
+    trust_status: Mapped[str] = mapped_column(String, default="auto")
+    trust_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    trust_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     events: Mapped[list["Event"]] = relationship(back_populates="device", order_by="Event.timestamp")
 

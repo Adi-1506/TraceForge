@@ -17,6 +17,7 @@ from server.schemas import (
     TimelineEntry,
 )
 from server.scoring.risk import level_for
+from server.scoring.trust import compute_trust
 
 
 def timeline_entries(events: list[Event]) -> list[TimelineEntry]:
@@ -49,6 +50,7 @@ def device_summary(db: Session, device: Device) -> DeviceOut:
         func.count(Event.id), func.max(Event.timestamp), func.count(func.distinct(Event.machine_id))
     ).filter(Event.device_id == device.id).one()
     connects = db.query(func.count(Event.id)).filter(Event.device_id == device.id, Event.event_type == "connect").scalar()
+    trust = compute_trust(db, device)
     latest = db.query(RiskScore).filter(RiskScore.device_id == device.id).join(Event, Event.id == RiskScore.event_id).order_by(Event.timestamp.desc(), Event.id.desc()).first()
     return DeviceOut(
         id=device.id,
@@ -63,6 +65,9 @@ def device_summary(db: Session, device: Device) -> DeviceOut:
         risk_score=latest.score if latest else None,
         risk_level=latest.level if latest else None,
         known=connects >= 2,
+        trust_score=trust.score,
+        trust_level=trust.level,
+        trust_status=trust.status,
     )
 
 
@@ -76,7 +81,13 @@ def device_detail(db: Session, device: Device) -> DeviceDetailOut:
         .order_by(Machine.hostname)
         .all()
     ]
-    return DeviceDetailOut(**device_summary(db, device).model_dump(), descriptor_json=device.descriptor_json, machines=hostnames)
+    return DeviceDetailOut(
+        **device_summary(db, device).model_dump(),
+        descriptor_json=device.descriptor_json,
+        machines=hostnames,
+        trust_factors=compute_trust(db, device).factors,
+        trust_note=device.trust_note,
+    )
 
 
 def case_members(db: Session, inc: Incident) -> list[Incident]:

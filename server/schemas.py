@@ -91,11 +91,21 @@ class DeviceOut(BaseModel):
     risk_score: float | None
     risk_level: str | None
     known: bool
+    trust_score: float
+    trust_level: str  # trusted | suspicious | untrusted | blocklisted
+    trust_status: str  # auto | trusted | blocklisted (investigator override)
 
 
 class DeviceDetailOut(DeviceOut):
     descriptor_json: dict | None
     machines: list[str]
+    trust_factors: list[dict] = []
+    trust_note: str | None = None
+
+
+class TrustUpdate(BaseModel):
+    status: Literal["auto", "trusted", "blocklisted"]
+    note: str | None = Field(default=None, max_length=500)
 
 
 class IncidentOut(BaseModel):

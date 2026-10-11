@@ -116,3 +116,62 @@ def test_scheduled_retraining_trains_once_there_is_enough_history(client):
     daily_history(client)
     assert retrain_once()["trained"] is True
     assert client.get("/ml/status").json()["trained"] is True
+
+
+# --- device trust score and overrides -------------------------------------------------------------
+
+
+def device(client, device_id):
+    return client.get(f"/devices/{device_id}").json()
+
+
+def test_new_device_starts_untrusted_and_earns_trust(client):
+    first = post(client)
+    d = device(client, first["event"]["device_id"])
+    assert d["trust_level"] == "untrusted" and d["trust_status"] == "auto"
+    assert {f["factor"] for f in d["trust_factors"]} >= {"baseline", "recent_risk"}
+
+    daily_history(client)  # 40 more clean connections over ~6 weeks
+    d = device(client, first["event"]["device_id"])
+    assert d["trust_level"] == "trusted", d["trust_factors"]
+
+
+def test_active_incident_costs_trust(client):
+    daily_history(client)
+    before = device(client, 1)["trust_score"]
+    post(client, dtype="USB Input Device", descriptor=HID, ts="2026-09-20T03:00:00Z")
+    after = device(client, 1)
+    assert after["trust_score"] < before
+    assert "active_incidents" in {f["factor"] for f in after["trust_factors"]}
+
+
+def test_blocklisted_device_is_flagged_on_every_connection_and_kept_out_of_training(client):
+    daily_history(client)
+    r = client.put("/devices/1/trust", json={"status": "blocklisted", "note": "Reported stolen"})
+    assert r.status_code == 200
+    assert r.json()["trust_level"] == "blocklisted" and r.json()["trust_score"] == 0
+    assert "Reported stolen" in r.json()["trust_factors"][0]["explanation"]
+
+    out = post(client, ts="2026-09-20T10:00:00Z")
+    assert "blocklisted_device" in anomaly_names(client, 1)
+    assert out["incident_id"] is not None
+    assert client.post("/ml/train").status_code == 400  # its whole history is left out of training
+    assert [d["id"] for d in client.get("/devices", params={"trust_level": "blocklisted"}).json()] == [1]
+
+
+def test_trusted_device_may_roam_but_a_changed_descriptor_is_still_caught(client):
+    post(client)
+    client.put("/devices/1/trust", json={"status": "trusted"})
+    roam = post(client, machine="PC-2", ts="2026-09-02T10:00:00Z")
+    assert "new_source_machine" not in {a["name"] for a in client.get("/anomalies", params={"device_id": 1}).json()}
+    assert device(client, 1)["trust_level"] == "trusted"
+
+    tampered = post(client, machine="PC-2", dtype="USB Input Device", descriptor=HID, ts="2026-09-03T10:00:00Z")
+    assert {"device_type_mismatch", "descriptor_mismatch"} <= anomaly_names(client, 1)
+    assert roam["risk_level"] == "low" and tampered["risk_level"] in ("high", "critical")
+
+
+def test_trust_override_is_validated(client):
+    post(client)
+    assert client.put("/devices/1/trust", json={"status": "maybe"}).status_code == 422
+    assert client.put("/devices/999/trust", json={"status": "trusted"}).status_code == 404

@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from server.database import get_db
 from server.models import Device
-from server.schemas import DeviceDetailOut, DeviceOut, ForensicReportOut, TimelineEntry
+from server.schemas import DeviceDetailOut, DeviceOut, ForensicReportOut, TimelineEntry, TrustUpdate
 from server.services.queries import (
     device_detail,
     device_events,
@@ -31,6 +32,7 @@ def list_devices(
     q: str | None = Query(default=None, description="Search term for vendor, product, serial, or device type"),
     risk_level: str | None = Query(default=None, description="Filter by risk level (low, medium, high, critical)"),
     known: bool | None = Query(default=None, description="Filter by known status"),
+    trust_level: str | None = Query(default=None, description="Filter by trust level (trusted, suspicious, untrusted, blocklisted)"),
     db: Session = Depends(get_db),
 ):
     summaries = [device_summary(db, d) for d in db.query(Device).all()]
@@ -52,12 +54,26 @@ def list_devices(
     if known is not None:
         summaries = [s for s in summaries if s.known == known]
 
+    if trust_level:
+        summaries = [s for s in summaries if s.trust_level == trust_level.strip().lower()]
+
     return sorted(summaries, key=lambda d: (d.risk_score or 0, d.last_seen or d.first_seen), reverse=True)
 
 
 @router.get("/{device_id}", response_model=DeviceDetailOut)
 def get_device(device_id: int, db: Session = Depends(get_db)):
     return device_detail(db, _get(db, device_id))
+
+
+@router.put("/{device_id}/trust", response_model=DeviceDetailOut)
+def set_trust(device_id: int, body: TrustUpdate, db: Session = Depends(get_db)):
+    """Investigator override: allowlist (trusted), blocklist, or back to the computed trust (auto)."""
+    device = _get(db, device_id)
+    device.trust_status = body.status
+    device.trust_note = body.note
+    device.trust_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return device_detail(db, device)
 
 
 @router.get("/{device_id}/timeline", response_model=list[TimelineEntry])
