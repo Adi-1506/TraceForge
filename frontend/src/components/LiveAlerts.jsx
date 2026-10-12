@@ -64,7 +64,7 @@ export default function LiveAlerts({ onOpenIncident }) {
                 {item.risk_level} <b>{Math.round(item.risk_score)}</b>
               </span>
               <span>
-                <span className="mono">{item.device}</span> {item.event_type === "connect" ? "→" : "left"} <span className="mono">{item.machine}</span>
+                <span className="mono">{item.device}</span> {{ connect: "→", disconnect: "left", typing: "typed on" }[item.event_type] || "→"} <span className="mono">{item.machine}</span>
                 <span className="muted small">
                   {" "}
                   · {formatTime(item.timestamp)}

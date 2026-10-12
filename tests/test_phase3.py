@@ -318,3 +318,70 @@ def test_live_stream_delivers_events_as_server_sent_events(client):
     first, second = asyncio.run(scenario())
     assert first.startswith(": connected")
     assert second.startswith("event: usb\ndata: ") and _json.loads(second.split("data: ", 1)[1])["event_id"] == 7
+
+
+# --- 3.3 keystroke-injection (BadUSB typing speed) ------------------------------------------------
+
+from agent.keystrokes import summarize  # noqa: E402
+
+
+def human_typing():
+    import random
+
+    rng = random.Random(3)
+    t, times = 2.0, []
+    for _ in range(60):
+        t += rng.uniform(0.08, 0.35)  # 80-350 ms, irregular
+        times.append(t)
+    return summarize(times, connected_at=0.0, watched_s=30)
+
+
+def injected_typing():
+    times = [1.2 + i * 0.008 for i in range(400)]  # 8 ms apart, perfectly regular, 1.2 s after plug-in
+    return summarize(times, connected_at=0.0, watched_s=30)
+
+
+def test_timing_summary_has_no_key_identities_and_tells_people_from_machines():
+    human, machine = human_typing(), injected_typing()
+    assert set(machine) == {"keys", "watched_s", "first_key_after_s", "duration_s", "rate_per_s", "median_gap_ms", "min_gap_ms", "gap_cv", "burst_fraction"}
+    assert human["median_gap_ms"] > 80 and human["gap_cv"] > 0.2 and human["rate_per_s"] < 10
+    assert machine["median_gap_ms"] == 8.0 and machine["gap_cv"] < 0.01 and machine["rate_per_s"] > 100
+    assert machine["first_key_after_s"] == 1.2 and machine["burst_fraction"] == 1.0
+
+
+def typing_event(typing, **kw):
+    return {**make_event(dtype="USB Input Device", descriptor=HID, **kw), "event_type": "typing", "typing": typing}
+
+
+def test_machine_speed_typing_is_flagged_and_joins_the_device_incident(client):
+    connect = post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID, ts="2026-09-02T03:00:00Z")
+    r = client.post("/events/ingest", json=typing_event(injected_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-02T03:00:31Z"))
+    assert r.status_code == 200
+    out = r.json()
+    assert out["risk_level"] in ("high", "critical") and out["incident_id"] is not None
+    finding = next(a for a in client.get("/anomalies", params={"device_id": 1}).json() if a["name"] == "keystroke_injection")
+    assert "400 keys" in finding["explanation"] and [t["id"] for t in finding["mitre"]] == ["T1200", "T1059"]
+    story = client.get(f"/incidents/{out['incident_id']}/story").json()
+    assert story["headline"].startswith("Keystroke-injection (BadUSB) attack")
+    assert "this was a machine typing" in " ".join(story["paragraphs"])
+    assert connect["incident_id"] is None  # the connection alone looked like an ordinary new keyboard
+
+
+def test_a_person_typing_on_a_new_keyboard_is_not_flagged(client):
+    post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID)
+    r = client.post("/events/ingest", json=typing_event(human_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-01T10:00:31Z")).json()
+    assert r["risk_level"] == "low" and r["incident_id"] is None
+    assert "keystroke_injection" not in {a["name"] for a in client.get("/anomalies").json()}
+
+
+def test_agent_watches_only_devices_with_a_keyboard():
+    from types import SimpleNamespace
+
+    from agent.agent import has_keyboard
+
+    boot_keyboard = {"interfaces": [{"interface_class": 3, "interface_protocol": 1}]}
+    mouse = {"interfaces": [{"interface_class": 3, "interface_protocol": 2}]}
+    stick = {"interfaces": [{"interface_class": 8, "interface_protocol": 80}]}
+    dev = SimpleNamespace(device_type=None)
+    assert has_keyboard(dev, boot_keyboard) and not has_keyboard(dev, mouse) and not has_keyboard(dev, stick)
+    assert has_keyboard(SimpleNamespace(device_type="USB Input Device"), None)

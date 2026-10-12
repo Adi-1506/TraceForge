@@ -47,7 +47,7 @@ export default function Timeline({ entries }) {
           <div className="tl-dot" />
           <div className="tl-body">
             <div className="tl-head">
-              <b>{e.event_type === "connect" ? "Connected" : "Disconnected"}</b>
+              <b>{{ connect: "Connected", disconnect: "Disconnected", typing: "Typing report" }[e.event_type] || e.event_type}</b>
               <span className="muted">
                 on <span className="mono">{e.machine_hostname}</span>
               </span>

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from server import alerts, integrity
 from server.detection import fingerprint, ml_model
-from server.detection.rules import run_rules
+from server.detection.rules import check_keystroke_injection, run_rules
 from server.incidents.correlate import correlate
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import EventIngest
@@ -89,6 +89,11 @@ def _process(db: Session, payload: EventIngest) -> IngestOutcome:
             db, device=device, machine=machine, event=event, payload=payload, is_new_device=is_new_device
         )
         findings += ml_model.detect(db, event)
+        for f in findings:
+            db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
+        risk = score_connect_event(db, event, findings)
+    elif payload.event_type == "typing":
+        findings = check_keystroke_injection(payload.typing)
         for f in findings:
             db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
         risk = score_connect_event(db, event, findings)

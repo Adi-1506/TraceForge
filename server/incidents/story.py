@@ -16,6 +16,15 @@ IMPERSONATION = {"serial_reuse_across_models", "descriptor_model_mismatch", "sam
 KINDS = [
     # (findings that identify it, headline, recommended steps)
     (
+        {"keystroke_injection"},
+        "Keystroke-injection (BadUSB) attack: machine-speed typing",
+        [
+            "Treat the affected machines as compromised: the device typed faster than any person can.",
+            "Check what ran on those machines in the seconds after the connection (shell history, PowerShell logs, new scheduled tasks, new user accounts).",
+            "Blocklist the device so any return is flagged at once, and collect it for analysis.",
+        ],
+    ),
+    (
         {"device_type_mismatch", "programmable_hid_board"},
         "Possible keystroke-injection (BadUSB) attack",
         [
@@ -84,10 +93,11 @@ def build_story(db: Session, incident: Incident) -> dict:
         .all()
     )
     connects = [e for e in events if e.event_type == "connect"]
+    typing = [a for e in events if e.event_type == "typing" for a in e.anomalies if a.name == "keystroke_injection"]
     if not connects:
         return {"headline": "Incident without recorded connections", "paragraphs": [], "recommendations": []}
 
-    findings = {a.name for e in connects for a in e.anomalies}
+    findings = {a.name for e in connects for a in e.anomalies} | {a.name for a in typing}
     headline, steps = next(((h, s) for names, h, s in KINDS if names & findings), ("Suspicious USB activity", []))
     first = connects[0]
     worst = max(connects, key=lambda e: e.risk_score.score if e.risk_score else 0)
@@ -108,6 +118,15 @@ def build_story(db: Session, incident: Incident) -> dict:
     if first_names & IMPERSONATION - {"missing_serial"}:
         opening += " Its serial number does not fit the identity it claims."
     paragraphs.append(opening)
+
+    if typing:
+        t = typing[0].detail or {}
+        started = f" {t['first_key_after_s']:g} seconds after it was plugged in," if t.get("first_key_after_s") is not None else ""
+        paragraphs.append(
+            f"Then,{started} it typed {t.get('keys')} keys at {t.get('rate_per_s'):g} keys per second, with a median gap of "
+            f"{t.get('median_gap_ms'):g} ms between keys and almost no variation. People type with roughly 80 to 250 ms between keys: "
+            "this was a machine typing, not a person. (Only the timing was recorded, never which keys.)"
+        )
 
     # 2. How it spread.
     if len(machines_in_order) > 1:

@@ -82,7 +82,7 @@ def feed_item(outcome) -> dict:
         "findings": [a.name for a in e.anomalies],
         "incident_id": incident.id if incident else None,
         "imported": bool(payload.get("source")),
-        "alert": e.event_type == "connect" and at_least(risk.level, settings.alert_min_level),
+        "alert": e.event_type != "disconnect" and at_least(risk.level, settings.alert_min_level),
     }
 
 

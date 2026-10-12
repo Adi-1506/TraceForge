@@ -21,6 +21,7 @@ FINDING_TECHNIQUES = {
     "descriptor_mismatch": ["T1200", "T1036"],
     "descriptor_model_mismatch": ["T1200", "T1036"],
     "programmable_hid_board": ["T1200", "T1059"],
+    "keystroke_injection": ["T1200", "T1059"],
     "blocklisted_device": ["T1200"],
     "new_source_machine": ["T1091"],
 }

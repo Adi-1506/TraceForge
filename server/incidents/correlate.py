@@ -89,6 +89,24 @@ def _find_incident(db: Session, event: Event, suspicious: bool) -> Incident | No
     return None
 
 
+def _include_preceding_connect(db: Session, incident: Incident, event: Event, ts) -> None:
+    """A typing report that opens an incident is about the connection it followed: link that too."""
+    connect = (
+        db.query(Event)
+        .filter(
+            Event.device_id == event.device_id,
+            Event.machine_id == event.machine_id,
+            Event.event_type == "connect",
+            Event.id != event.id,
+        )
+        .order_by(Event.timestamp.desc(), Event.id.desc())
+        .first()
+    )
+    if connect is not None and ts - as_utc(connect.timestamp) <= WINDOW:
+        db.add(IncidentEvent(incident_id=incident.id, event_id=connect.id))
+        incident.start_time = min(as_utc(incident.start_time), as_utc(connect.timestamp))
+
+
 def correlate(db: Session, event: Event, risk: RiskScore) -> Incident | None:
     ts = as_utc(event.timestamp)
     suspicious = risk.score >= INCIDENT_THRESHOLD
@@ -109,6 +127,8 @@ def correlate(db: Session, event: Event, risk: RiskScore) -> Incident | None:
         db.flush()
         if others:
             link_case(incident, others)
+        if event.event_type == "typing":
+            _include_preceding_connect(db, incident, event, ts)
 
     db.add(IncidentEvent(incident_id=incident.id, event_id=event.id))
     incident.start_time = min(as_utc(incident.start_time), ts)

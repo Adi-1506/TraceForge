@@ -257,6 +257,35 @@ def check_new_machine(db: Session, device: Device, machine: Machine, event: Even
     ]
 
 
+# People type with roughly 80-250 ms between keys and a lot of variation; injection tools type
+# hundreds of keys a second with near-identical gaps.
+INJECTION_MIN_KEYS = 15
+INJECTION_RATE = 25.0  # keys per second
+INJECTION_MEDIAN_MS = 30.0
+INJECTION_MAX_CV = 0.35  # gap variation (stdev / mean); machine typing is very regular
+
+
+def check_keystroke_injection(typing: dict | None) -> list[Finding]:
+    """Runs on 'typing' reports, not connects: superhuman, machine-regular typing from a new keyboard."""
+    if not typing or typing.get("keys", 0) < INJECTION_MIN_KEYS or "median_gap_ms" not in typing:
+        return []
+    rate, median, cv = typing.get("rate_per_s", 0.0), typing["median_gap_ms"], typing.get("gap_cv", 1.0)
+    if rate < INJECTION_RATE and not (median < INJECTION_MEDIAN_MS and cv < INJECTION_MAX_CV):
+        return []
+    started = typing.get("first_key_after_s")
+    start = f", starting {started:g} s after it was plugged in" if started is not None else ""
+    return [
+        Finding(
+            "rule",
+            "keystroke_injection",
+            60,
+            f"Typed {typing['keys']} keys at {rate:g} keys/s with a median gap of {median:g} ms and almost no variation "
+            f"(gap CV {cv:g}){start}. People type with roughly 80-250 ms between keys: this is a machine typing.",
+            {k: typing.get(k) for k in ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_after_s", "burst_fraction")},
+        )
+    ]
+
+
 RULES = [
     check_unknown_device,
     check_device_type_mismatch,
