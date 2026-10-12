@@ -1,0 +1,14 @@
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.441210] usb 1-2: new high-speed USB device number 7 using xhci_hcd
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.592101] usb 1-2: New USB device found, idVendor=0781, idProduct=5581, bcdDevice= 1.00
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.592110] usb 1-2: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.592114] usb 1-2: Product: Ultra
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.592117] usb 1-2: Manufacturer: SanDisk
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.592120] usb 1-2: SerialNumber: 4C530001230516
+Sep  5 22:14:03 lab-ubuntu kernel: [ 9123.601332] usb-storage 1-2:1.0: USB Mass Storage device detected
+Sep  5 22:14:04 lab-ubuntu kernel: [ 9124.010001] usb usb1: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.05
+Sep  5 22:20:41 lab-ubuntu kernel: [ 9521.100230] usb 1-2: USB disconnect, device number 7
+Sep  5 23:02:10 lab-ubuntu kernel: [11990.204512] usb 1-3: New USB device found, idVendor=0781, idProduct=5581, bcdDevice= 1.00
+Sep  5 23:02:10 lab-ubuntu kernel: [11990.204530] usb 1-3: SerialNumber: 4C530001230516
+Sep  5 23:02:10 lab-ubuntu kernel: [11990.211002] usb-storage 1-3:1.0: USB Mass Storage device detected
+Sep  5 23:02:11 lab-ubuntu kernel: [11991.002113] input: SanDisk Ultra Keyboard as /devices/pci0000:00/0000:00:14.0/usb1/1-3/1-3:1.1/0003:0781:5581.0004/input/input21
+Sep  5 23:02:11 lab-ubuntu kernel: [11991.060450] hid-generic 0003:0781:5581.0004: input,hidraw1: USB HID v1.11 Keyboard [SanDisk Ultra] on usb-0000:00:14.0-3/input1

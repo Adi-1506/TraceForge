@@ -94,15 +94,19 @@ def _bearer(authorization: str | None) -> str | None:
     return None
 
 
-def current_user(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> User | None:
-    """The logged-in user, or None when logins are switched off."""
+def user_for_token(db: Session, token: str | None) -> User | None:
+    """The logged-in user for a bearer token, or None when logins are switched off; 401 otherwise."""
     if not settings.auth_enabled:
         return None
-    token = _bearer(authorization)
     session = db.query(UserSession).filter(UserSession.token_hash == token_digest(token)).first() if token else None
     if session is None or as_utc(session.expires_at) <= datetime.now(timezone.utc) or not session.user.active:
         raise HTTPException(status_code=401, detail="Log in to continue.", headers={"WWW-Authenticate": "Bearer"})
     return session.user
+
+
+def current_user(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> User | None:
+    """The logged-in user, or None when logins are switched off."""
+    return user_for_token(db, _bearer(authorization))
 
 
 def require_role(*roles: str):

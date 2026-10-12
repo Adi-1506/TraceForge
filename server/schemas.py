@@ -26,6 +26,9 @@ class EventIngest(BaseModel):
     descriptor: dict | None = None
     # How the device enumerated: {"interface_order": [class codes in arrival order], "duration_ms": float}
     enumeration: dict | None = None
+    # Where the event came from: None for the live agent, "import:setupapi" etc. for imported evidence.
+    source: str | None = None
+    evidence: dict | None = None  # the imported file and line context, for chain of custody
 
 
 class EventOut(ORM):
@@ -133,6 +136,12 @@ class IncidentUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class StoryOut(BaseModel):
+    headline: str
+    paragraphs: list[str]
+    recommendations: list[str]
+
+
 class IncidentDetailOut(IncidentOut):
     timeline: list[TimelineEntry]
     related: list[IncidentOut] = []  # the other incidents in the same case
@@ -156,6 +165,43 @@ class AuditOut(ORM):
     target_type: str | None = None
     target_id: int | None = None
     detail: dict | None = None
+
+
+class GraphMachine(BaseModel):
+    id: int
+    hostname: str
+    max_risk: float
+
+
+class GraphDevice(BaseModel):
+    id: int
+    label: str
+    serial_number: str | None = None
+    trust_level: str
+    max_risk: float
+
+
+class GraphEvent(BaseModel):
+    event_id: int
+    timestamp: UTCDatetime
+    event_type: str
+    device_id: int
+    machine_id: int
+    risk_score: float
+    risk_level: str
+    findings: list[str] = []
+    mitre: list[str] = []
+    incident_id: int | None = None
+
+
+class GraphOut(BaseModel):
+    title: str | None = None  # "Case #1" when replaying an incident's case
+    start: UTCDatetime | None = None
+    end: UTCDatetime | None = None
+    machines: list[GraphMachine]
+    devices: list[GraphDevice]
+    events: list[GraphEvent]  # time order: the replay steps through these
+    truncated: bool = False
 
 
 class IntegrityOut(BaseModel):

@@ -761,3 +761,229 @@ body {
   word-break: break-all;
   text-align: right;
 }
+
+/* Phase 3: attack graph and incident replay */
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.graph-toolbar h3 {
+  margin: 0;
+}
+.graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.graph-controls .segmented {
+  margin-bottom: 0;
+}
+.graph-slider {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent);
+}
+.graph-caption {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--row-hover);
+  font-size: 13px;
+  min-height: 20px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--border);
+}
+.graph-caption-medium { border-left-color: var(--medium); }
+.graph-caption-high { border-left-color: var(--high); }
+.graph-caption-critical { border-left-color: var(--critical); }
+.graph-mitre { color: var(--ml); }
+.graph-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.graph-heading {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  fill: var(--muted);
+}
+.graph-label {
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--text);
+}
+.graph-sub {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.graph-node rect {
+  fill: var(--panel);
+  stroke: var(--border);
+  stroke-width: 1.25;
+  transition: stroke 0.3s, fill 0.3s;
+}
+.node-idle { opacity: 0.45; }
+.node-low rect { stroke: var(--low); }
+.node-medium rect { stroke: var(--medium); fill: var(--medium-bg); }
+.node-high rect { stroke: var(--high); fill: var(--high-bg); }
+.node-critical rect { stroke: var(--critical); fill: var(--critical-bg); }
+.node-active rect { stroke-width: 3; }
+.graph-link {
+  fill: none;
+  opacity: 0.75;
+  transition: opacity 0.3s;
+}
+.link-low { stroke: var(--low); opacity: 0.35; }
+.link-medium { stroke: var(--medium); }
+.link-high { stroke: var(--high); }
+.link-critical { stroke: var(--critical); }
+.link-current {
+  opacity: 1;
+  stroke-dasharray: 8 6;
+  animation: link-flow 0.8s linear infinite;
+}
+@keyframes link-flow {
+  to { stroke-dashoffset: -28; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .link-current { animation: none; }
+}
+
+/* Phase 3: evidence import */
+.evidence-sources {
+  margin: 6px 0 12px;
+  padding-left: 18px;
+}
+.evidence-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.evidence-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.export-hash-left {
+  margin: 6px 0;
+  word-break: break-all;
+}
+
+/* Phase 3: incident story */
+.story p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.story-headline {
+  font-weight: 700;
+  font-size: 15px;
+}
+.story h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+.story ol {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+/* Phase 3: live alerts */
+.live-alerts {
+  position: relative;
+  display: inline-flex;
+}
+.bell {
+  position: relative;
+}
+.bell-unread {
+  border-color: var(--critical);
+}
+.bell-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--critical);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+}
+.alert-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: min(440px, calc(100vw - 32px));
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(10, 20, 40, 0.18);
+  padding: 8px;
+}
+.alert-panel-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 4px 6px 8px;
+}
+.alert-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.alert-row:hover {
+  background: var(--row-hover);
+}
+.alert-high { border-left-color: var(--high); }
+.alert-critical { border-left-color: var(--critical); }
+.alert-medium { border-left-color: var(--medium); }
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+}
+.toast {
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--high);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(10, 20, 40, 0.18);
+  cursor: pointer;
+}
+.toast.alert-critical { border-left-color: var(--critical); }

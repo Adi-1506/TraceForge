@@ -1,0 +1,31 @@
+[Device Install Log]
+     OS Version = 10.0.22631
+     Service Pack = 0.0
+>>>  [Device Install (Hardware initiated) - USB\VID_0951&PID_1666\0019E06B8A0A1E91]
+>>>  Section start 2026/09/03 14:05:11.402
+     ump: Creating Install Process: DrvInst.exe 14:05:11.406
+     ndv: Retrieving device info...
+<<<  Section end 2026/09/03 14:05:13.010
+<<<  [Exit status: SUCCESS]
+
+>>>  [Device Install (Hardware initiated) - USBSTOR\Disk&Ven_Kingston&Prod_DataTraveler_3.0&Rev_PMAP\0019E06B8A0A1E91&0]
+>>>  Section start 2026/09/03 14:05:12.120
+<<<  Section end 2026/09/03 14:05:12.900
+<<<  [Exit status: SUCCESS]
+
+>>>  [Device Install (Hardware initiated) - USB\ROOT_HUB30\4&2f4c0d8&0&0]
+>>>  Section start 2026/09/03 14:06:00.000
+<<<  Section end 2026/09/03 14:06:00.500
+
+>>>  [Device Install (Hardware initiated) - USB\VID_16D0&PID_0753\5&1f3a2b9&0&2]
+>>>  Section start 2026/09/04 02:47:30.000
+<<<  Section end 2026/09/04 02:47:31.000
+<<<  [Exit status: SUCCESS]
+
+>>>  [Device Install (Hardware initiated) - HID\VID_16D0&PID_0753\6&2c1d4e&0&0000]
+>>>  Section start 2026/09/04 02:47:31.200
+<<<  Section end 2026/09/04 02:47:31.800
+
+>>>  [Device Install (Hardware initiated) - USB\VID_0951&PID_1666\0019E06B8A0A1E91]
+>>>  Section start 2026/09/10 09:00:00.000
+<<<  Section end 2026/09/10 09:00:01.000

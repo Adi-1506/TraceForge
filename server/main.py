@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from server import integrity, models  # noqa: F401  (models registers tables on Base.metadata)
 from server.config import settings
 from server.database import Base, SessionLocal, engine, upgrade_schema
-from server.routers import anomalies, audit_log, auth, devices, events, evidence, incidents, risk, system
+from server.routers import alerts as alert_routes
+from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, system
 from server.scheduler import retrain_loop
 
 
@@ -35,7 +36,7 @@ app.add_middleware(
     expose_headers=["X-Content-SHA256"],
 )
 
-for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, audit_log):
+for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, audit_log, graph, forensics, alert_routes):
     app.include_router(r.router)
 
 

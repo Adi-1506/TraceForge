@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, formatTime, usePolling } from "../api.js";
+import AttackGraph from "./AttackGraph.jsx";
 import MitreChips from "./MitreChips.jsx";
 import RiskBadge from "./RiskBadge.jsx";
 import Timeline from "./Timeline.jsx";
@@ -116,6 +117,63 @@ function Workflow({ incident, onChanged }) {
   );
 }
 
+function Story({ incidentId }) {
+  const { data } = usePolling(() => api.incidentStory(incidentId), `story-${incidentId}`, 10000);
+  if (!data) return null;
+  return (
+    <div className="card-section story">
+      <h3>What happened</h3>
+      <p className="story-headline">{data.headline}</p>
+      {data.paragraphs.map((p, i) => (
+        <p key={i}>{p}</p>
+      ))}
+      {data.recommendations.length > 0 && (
+        <>
+          <h4>Recommended next steps</h4>
+          <ol>
+            {data.recommendations.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Replay({ incidentId }) {
+  const [graph, setGraph] = useState(null);
+  const [error, setError] = useState(null);
+  const open = async () => {
+    setError(null);
+    try {
+      setGraph(await api.graph({ incident_id: incidentId }));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card-section">
+      <div className="graph-toolbar">
+        <h3>{graph?.title ? `Replay · ${graph.title}` : "Replay"}</h3>
+        {!graph && (
+          <button className="btn btn-sm" onClick={open}>
+            ▶ Replay attack
+          </button>
+        )}
+        {graph && (
+          <button className="btn btn-sm" onClick={() => setGraph(null)}>
+            Close
+          </button>
+        )}
+      </div>
+      {!graph && <p className="muted small">Watch this incident, and every linked incident on other machines, unfold step by step.</p>}
+      {error && <div className="error small">{error}</div>}
+      {graph && <AttackGraph data={graph} autoplay />}
+    </div>
+  );
+}
+
 export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onChanged }) {
   const { data, refresh } = usePolling(() => api.incident(incidentId), incidentId);
   if (!data) return <div className="empty">Loading incident…</div>;
@@ -136,6 +194,7 @@ export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onCh
           Open device profile →
         </button>
       </div>
+      <Story incidentId={data.id} />
       {data.mitre?.length > 0 && (
         <div className="card-section">
           <h3>MITRE ATT&amp;CK techniques</h3>
@@ -152,6 +211,7 @@ export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onCh
           </ul>
         </div>
       )}
+      <Replay key={data.id} incidentId={data.id} />
       <CaseSection incident={data} onSelectIncident={onSelectIncident} />
       <Workflow
         key={data.id}
