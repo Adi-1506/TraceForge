@@ -26,6 +26,9 @@ class EventIngest(BaseModel):
     descriptor: dict | None = None
     # How the device enumerated: {"interface_order": [class codes in arrival order], "duration_ms": float}
     enumeration: dict | None = None
+    # Where the event came from: None for the live agent, "import:setupapi" etc. for imported evidence.
+    source: str | None = None
+    evidence: dict | None = None  # the imported file and line context, for chain of custody
 
 
 class EventOut(ORM):

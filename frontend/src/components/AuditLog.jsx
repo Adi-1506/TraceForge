@@ -8,6 +8,7 @@ const LABELS = {
   "device.trust": "Changed device trust",
   "ml.train": "Retrained model",
   "user.create": "Created user",
+  "evidence.import": "Imported evidence",
 };
 
 function describe(e) {
@@ -21,6 +22,7 @@ function describe(e) {
   if (e.action === "device.trust") return `${d.previous} → ${d.status}${d.note ? ` (${d.note})` : ""}`;
   if (e.action === "ml.train") return `${d.algorithm}, ${d.rows} connections, ${d.excluded} left out`;
   if (e.action === "user.create") return `${d.username} (${d.role})`;
+  if (e.action === "evidence.import") return `${d.filename} (${d.kind}), ${d.events} events, sha256 ${String(d.sha256).slice(0, 12)}…`;
   return "";
 }
 

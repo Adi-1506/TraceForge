@@ -854,3 +854,26 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .link-current { animation: none; }
 }
+
+/* Phase 3: evidence import */
+.evidence-sources {
+  margin: 6px 0 12px;
+  padding-left: 18px;
+}
+.evidence-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.evidence-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.export-hash-left {
+  margin: 6px 0;
+  word-break: break-all;
+}

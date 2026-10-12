@@ -3,6 +3,7 @@ import { API_URL, DISPLAY_TZ, api, setToken, usePolling } from "./api.js";
 import AuditLog from "./components/AuditLog.jsx";
 import DeviceList from "./components/DeviceList.jsx";
 import DevicePanel from "./components/DevicePanel.jsx";
+import EvidenceImport from "./components/EvidenceImport.jsx";
 import GraphView from "./components/GraphView.jsx";
 import { IncidentPanel, IncidentTable } from "./components/IncidentList.jsx";
 import Login from "./components/Login.jsx";
@@ -136,6 +137,9 @@ function Dashboard({ user, onLogout }) {
         <button className={tab === "graph" ? "active" : ""} onClick={() => setTab("graph")}>
           Attack graph
         </button>
+        <button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>
+          Evidence import
+        </button>
         {isAdmin && (
           <button className={tab === "audit" ? "active" : ""} onClick={() => setTab("audit")}>
             Audit log
@@ -143,8 +147,12 @@ function Dashboard({ user, onLogout }) {
         )}
       </nav>
 
-      {tab === "audit" || tab === "graph" ? (
-        <section className="pane">{tab === "audit" ? <AuditLog /> : <GraphView />}</section>
+      {["audit", "graph", "evidence"].includes(tab) ? (
+        <section className="pane">
+          {tab === "audit" && <AuditLog />}
+          {tab === "graph" && <GraphView />}
+          {tab === "evidence" && <EvidenceImport />}
+        </section>
       ) : (
         <main className="split">
           <section className="pane">

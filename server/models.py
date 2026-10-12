@@ -161,3 +161,18 @@ class AuditEntry(Base):
     target_type: Mapped[str | None] = mapped_column(String, nullable=True)
     target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class EvidenceImport(Base):
+    """Chain of custody for evidence files imported from seized machines."""
+
+    __tablename__ = "evidence_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    filename: Mapped[str] = mapped_column(String)
+    sha256: Mapped[str] = mapped_column(String, unique=True, index=True)  # of the exact bytes imported
+    kind: Mapped[str] = mapped_column(String)  # setupapi | registry | linux
+    machine_hostname: Mapped[str | None] = mapped_column(String, nullable=True)
+    imported_by: Mapped[str] = mapped_column(String)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    events_imported: Mapped[int] = mapped_column(Integer, default=0)
