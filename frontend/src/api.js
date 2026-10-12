@@ -2,8 +2,32 @@ import { useEffect, useRef, useState } from "react";
 
 export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+// The login token lives for this browser tab only (sessionStorage), so closing the tab logs out.
+const TOKEN_KEY = "traceforge-token";
+export function getToken() {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+export function setToken(token) {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable: the session just won't survive a reload */
+  }
+}
+
+const withAuth = (options = {}) => {
+  const token = getToken();
+  return token ? { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } } : options;
+};
+
 async function request(path, options) {
-  const res = await fetch(`${API_URL}${path}`, options);
+  const res = await fetch(`${API_URL}${path}`, withAuth(options));
+  if (res.status === 401 && getToken()) window.dispatchEvent(new Event("traceforge:logged-out"));
   if (!res.ok) {
     let detail = `${res.status} ${path}`;
     try {
@@ -13,7 +37,18 @@ async function request(path, options) {
     }
     throw new Error(detail);
   }
-  return res.json();
+  return res.status === 204 ? null : res.json();
+}
+
+// Downloads an export with the login token and returns the SHA-256 the server computed for it.
+async function download(path, filename) {
+  const res = await fetch(`${API_URL}${path}`, withAuth());
+  if (!res.ok) throw new Error(`${res.status} ${path}`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  a.click();
+  URL.revokeObjectURL(url);
+  return res.headers.get("X-Content-SHA256");
 }
 
 const get = (path) => request(path);
@@ -34,10 +69,18 @@ export const api = {
   device: (id) => get(`/devices/${id}`),
   timeline: (id) => get(`/devices/${id}/timeline`),
   riskHistory: (id) => get(`/risk-scores/${id}`),
-  exportDeviceUrl: (id, format = "json") => `${API_URL}/devices/${id}/export?format=${format}`,
+  exportDevice: (id, format, filename) => download(`/devices/${id}/export?format=${format}`, filename),
   incidents: () => get("/incidents"),
   incident: (id) => get(`/incidents/${id}`),
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),
+  setTrust: (id, status, note) => send("PUT", `/devices/${id}/trust`, { status, note: note || null }),
+  integrity: () => get("/integrity/verify"),
+  mlStatus: () => get("/ml/status"),
+  authConfig: () => get("/auth/config"),
+  login: (username, password) => send("POST", "/auth/login", { username, password }),
+  logout: () => send("POST", "/auth/logout"),
+  me: () => get("/auth/me"),
+  audit: () => get("/audit"),
 };
 
 // Re-runs `load` every `ms`; returns { data, error, refresh }. `key` resets the data when the target changes.

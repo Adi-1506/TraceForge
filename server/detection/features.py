@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from server.models import Event
+from server.models import Device, Event, IncidentEvent
 from server.timeutil import as_utc, to_local
 
 # Identity questions (unknown device, new machine, ...) belong to the rule engine;
@@ -116,19 +116,31 @@ def extract_event_features(db: Session, event: Event) -> list[float]:
     )
 
 
-def build_training_matrix(db: Session) -> list[list[float]]:
-    """One row per historical connect event, using only data available at that moment."""
+def build_training_matrix(db: Session, with_excluded: bool = False):
+    """One row per historical connect event, using only data available at that moment.
+
+    Connections that became part of an incident stay in each device's history (they happened)
+    but are not used as training rows, so the model never learns an attack as normal behaviour;
+    neither is anything from a blocklisted device.
+    With with_excluded=True, returns (rows, number of connections left out)."""
+    suspicious = {e for (e,) in db.query(IncidentEvent.event_id).all()}
+    blocklisted = {d for (d,) in db.query(Device.id).filter(Device.trust_status == "blocklisted").all()}
     by_device: dict[int, list[tuple]] = {}
-    for dev_id, ts, mach, raw in (
-        db.query(Event.device_id, Event.timestamp, Event.machine_id, Event.raw_payload)
+    for event_id, dev_id, ts, mach, raw in (
+        db.query(Event.id, Event.device_id, Event.timestamp, Event.machine_id, Event.raw_payload)
         .filter(Event.event_type == "connect")
         .order_by(Event.timestamp)
         .all()
     ):
-        by_device.setdefault(dev_id, []).append((ts, mach, _enumeration(raw)))
+        by_device.setdefault(dev_id, []).append((event_id, (ts, mach, _enumeration(raw))))
 
     rows: list[list[float]] = []
-    for events in by_device.values():
-        for i, cur in enumerate(events):
-            rows.append(features_from_history(events[:i], cur))
-    return rows
+    excluded = 0
+    for dev_id, events in by_device.items():
+        history = [e for _, e in events]
+        for i, (event_id, cur) in enumerate(events):
+            if event_id in suspicious or dev_id in blocklisted:
+                excluded += 1
+                continue
+            rows.append(features_from_history(history[:i], cur))
+    return (rows, excluded) if with_excluded else rows

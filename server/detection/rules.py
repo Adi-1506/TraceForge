@@ -2,10 +2,13 @@
 that feeds the risk score and a human-readable explanation."""
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
+from server.detection import signatures
 from server.models import Device, Event, Machine
+from server.timeutil import as_utc
 
 # Descriptor fields that must stay stable for a given physical device. The fingerprint
 # covers the full interface/endpoint tree when the agent can read it (see fingerprint.py).
@@ -174,6 +177,66 @@ def check_descriptor_model_mismatch(db: Session, device: Device, payload, is_new
     ]
 
 
+LOOKALIKE_WINDOW = timedelta(hours=24)
+
+
+def check_same_model_new_serial(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
+    """A new unit of a model that was on this same machine in the last 24 hours, under a different serial:
+    the pattern of a known drive being swapped for a lookalike carrying its VID/PID."""
+    if not is_new_device:
+        return []
+    since = as_utc(event.timestamp) - LOOKALIKE_WINDOW
+    sibling = (
+        db.query(Device)
+        .join(Event, Event.device_id == Device.id)
+        .filter(
+            Device.vendor_id == device.vendor_id,
+            Device.product_id == device.product_id,
+            Device.id != device.id,
+            Event.machine_id == machine.id,
+            Event.timestamp >= since,
+            Event.id != event.id,
+        )
+        .first()
+    )
+    if sibling is None:
+        return []
+    return [
+        Finding(
+            "rule",
+            "same_model_new_serial",
+            10,
+            f"{device.vendor_id}:{device.product_id} with serial '{sibling.serial_number or '(none)'}' was on "
+            f"{machine.hostname} in the last 24 hours; this unit claims the same model with serial "
+            f"'{device.serial_number or '(none)'}'.",
+            {"other_device_id": sibling.id},
+        )
+    ]
+
+
+def check_programmable_hid_board(device: Device, payload, **_) -> list[Finding]:
+    board = signatures.match(device.vendor_id, device.product_id)
+    if board is None or not signatures.presents_keyboard(payload.device_type, payload.descriptor):
+        return []
+    return [
+        Finding(
+            "rule",
+            "programmable_hid_board",
+            40,
+            f"{device.vendor_id}:{device.product_id} is a {board}, a programmable board often used for "
+            f"keystroke injection, and it presents a keyboard interface.",
+            {"board": board},
+        )
+    ]
+
+
+def check_blocklisted(device: Device, **_) -> list[Finding]:
+    if device.trust_status != "blocklisted":
+        return []
+    note = f" ({device.trust_note})" if device.trust_note else ""
+    return [Finding("rule", "blocklisted_device", 60, f"This device was blocklisted by an investigator{note}.")]
+
+
 def check_new_machine(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
     if is_new_device:
         return []
@@ -201,12 +264,21 @@ RULES = [
     check_serial_format,
     check_descriptor_mismatch,
     check_descriptor_model_mismatch,
+    check_same_model_new_serial,
+    check_programmable_hid_board,
+    check_blocklisted,
     check_new_machine,
 ]
+
+# An allowlisted (trusted) device may roam between machines; identity, descriptor and behaviour
+# checks still apply, so a clone of a trusted device is still caught.
+SILENCED_WHEN_TRUSTED = {"new_source_machine"}
 
 
 def run_rules(db: Session, **ctx) -> list[Finding]:
     findings: list[Finding] = []
     for rule in RULES:
         findings.extend(rule(db=db, **ctx))
+    if ctx["device"].trust_status == "trusted":
+        findings = [f for f in findings if f.name not in SILENCED_WHEN_TRUSTED]
     return findings

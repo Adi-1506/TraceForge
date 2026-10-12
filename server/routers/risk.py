@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from server.auth import current_user
 from server.database import get_db
 from server.models import Device, Event, RiskScore
 from server.schemas import RiskOut
 
-router = APIRouter(prefix="/risk-scores", tags=["risk"])
+router = APIRouter(prefix="/risk-scores", tags=["risk"], dependencies=[Depends(current_user)])
 
 
 @router.get("/{device_id}", response_model=list[RiskOut])

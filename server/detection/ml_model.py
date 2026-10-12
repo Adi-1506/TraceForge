@@ -1,10 +1,14 @@
-"""Isolation Forest behavioural anomaly detector with SHAP explanations."""
+"""Behavioural anomaly detector (Isolation Forest or One-Class SVM) with SHAP explanations."""
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
 import numpy as np
 from sklearn.ensemble import IsolationForest
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import OneClassSVM
 from sqlalchemy.orm import Session
 
 from server.config import settings
@@ -22,7 +26,9 @@ MIN_TRAINING_ROWS = 30
 # Events scoring below this percentile of the training scores count as outliers,
 # so roughly 3% of normal behaviour is flagged rather than whatever the default offset gives.
 THRESHOLD_PERCENTILE = 3
-SEVERITY_SPAN = 0.15  # how far below the threshold counts as maximum severity
+SEVERITY_SPAN = 0.15  # Isolation Forest: how far below the threshold counts as maximum severity
+OCSVM_NU = 0.05  # upper bound on the share of training points the One-Class SVM treats as outliers
+BACKGROUND_ROWS = 50  # training rows kept for the One-Class SVM's SHAP explainer
 MAX_WEIGHT = 45.0
 
 _bundle: dict | None = None
@@ -35,8 +41,11 @@ def _load() -> dict | None:
         # A model saved with a different feature set cannot score current vectors; retrain instead.
         if loaded.get("features") == FEATURE_NAMES:
             _bundle = loaded
-    # A model trained under another timezone learned a different meaning of "night".
-    if _bundle is not None and _bundle.get("timezone") != settings.timezone:
+    # A model trained under another timezone learned a different meaning of "night",
+    # and one trained with the other algorithm is not the detector that was asked for.
+    if _bundle is not None and (
+        _bundle.get("timezone") != settings.timezone or _bundle.get("algorithm", "iforest") != settings.ml_algorithm
+    ):
         return None
     return _bundle
 
@@ -45,18 +54,34 @@ def status() -> dict:
     b = _load()
     return {
         "trained": b is not None,
+        "algorithm": settings.ml_algorithm,
         "training_rows": b["training_rows"] if b else 0,
+        "excluded_rows": b.get("excluded_rows", 0) if b else 0,
+        "trained_at": b.get("trained_at") if b else None,
+        "retrain_interval_hours": settings.retrain_interval_hours,
         "threshold": round(b["threshold"], 4) if b else None,
         "features": FEATURE_NAMES,
     }
 
 
-def fit_bundle(X: np.ndarray) -> dict:
-    model = IsolationForest(n_estimators=200, contamination="auto", random_state=42).fit(X)
+def fit_bundle(X: np.ndarray, algorithm: str = "iforest") -> dict:
+    if algorithm == "ocsvm":
+        # SVM distances depend on feature scale, so the features are standardised first.
+        model = make_pipeline(StandardScaler(), OneClassSVM(nu=OCSVM_NU, gamma="scale")).fit(X)
+    else:
+        model = IsolationForest(n_estimators=200, contamination="auto", random_state=42).fit(X)
+    scores = model.decision_function(X)
+    threshold = float(np.percentile(scores, THRESHOLD_PERCENTILE))
+    rng = np.random.default_rng(42)
     return {
         "model": model,
+        "algorithm": algorithm,
         "timezone": settings.timezone,
-        "threshold": float(np.percentile(model.decision_function(X), THRESHOLD_PERCENTILE)),
+        "threshold": threshold,
+        # Decision values are on a different scale per algorithm; the gap from the threshold to the
+        # most outlying training point is what counts as maximum severity for the One-Class SVM.
+        "span": SEVERITY_SPAN if algorithm == "iforest" else max(threshold - float(scores.min()), 1e-6),
+        "background": X[rng.choice(len(X), size=min(BACKGROUND_ROWS, len(X)), replace=False)],
         "training_rows": len(X),
         "features": FEATURE_NAMES,
         "median": np.median(X, axis=0),
@@ -71,10 +96,12 @@ def fit_bundle(X: np.ndarray) -> dict:
 
 def train(db: Session) -> dict:
     global _bundle
-    rows = build_training_matrix(db)
+    rows, excluded = build_training_matrix(db, with_excluded=True)
     if len(rows) < MIN_TRAINING_ROWS:
         raise ValueError(f"Need at least {MIN_TRAINING_ROWS} historical connect events to train, have {len(rows)}.")
-    _bundle = fit_bundle(np.array(rows))
+    _bundle = fit_bundle(np.array(rows), settings.ml_algorithm)
+    _bundle["excluded_rows"] = excluded
+    _bundle["trained_at"] = datetime.now(timezone.utc).isoformat()
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(_bundle, MODEL_PATH)
     return status()
@@ -148,9 +175,14 @@ def detect(db: Session, event: Event) -> list[Finding]:
 
     import shap  # imported lazily: slow import, only needed on anomalies
 
-    explainer = shap.TreeExplainer(bundle["model"])
-    contrib = np.asarray(explainer.shap_values(x)).reshape(-1)
-    # In Isolation Forest, negative SHAP values push the point toward "anomalous".
+    if bundle.get("algorithm", "iforest") == "ocsvm":
+        background = shap.kmeans(bundle["background"], min(10, len(bundle["background"])))
+        explainer = shap.KernelExplainer(bundle["model"].decision_function, background)
+        contrib = np.asarray(explainer.shap_values(x, nsamples=200, silent=True)).reshape(-1)
+    else:
+        contrib = np.asarray(shap.TreeExplainer(bundle["model"]).shap_values(x)).reshape(-1)
+    # For both detectors a lower decision value is more anomalous, so negative SHAP values
+    # are the features pushing this connection toward "outlier".
     order = np.argsort(contrib)
     top = [i for i in order[:3] if contrib[i] < 0]
     drivers = [
@@ -163,7 +195,7 @@ def detect(db: Session, event: Event) -> list[Finding]:
         }
         for i in top
     ]
-    severity = min(1.0, (threshold - score) / SEVERITY_SPAN)
+    severity = min(1.0, (threshold - score) / bundle.get("span", SEVERITY_SPAN))
     weight = round(15 + (MAX_WEIGHT - 15) * severity, 1)
     why = "; ".join(d["text"] for d in drivers) or "overall behaviour deviates from the learned baseline"
     return [
@@ -172,6 +204,6 @@ def detect(db: Session, event: Event) -> list[Finding]:
             "behavioural_outlier",
             weight,
             f"Behaviour deviates from the learned baseline (SHAP): {why}.",
-            {"anomaly_score": round(score, 4), "drivers": drivers},
+            {"algorithm": bundle.get("algorithm", "iforest"), "anomaly_score": round(score, 4), "drivers": drivers},
         )
     ] + novelty

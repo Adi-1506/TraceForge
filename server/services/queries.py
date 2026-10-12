@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from server.models import Device, Event, Incident, IncidentEvent, Machine, RiskScore
+from server import integrity
+from server.detection.mitre import techniques_for_all
+from server.models import Anomaly, Device, Event, Incident, IncidentEvent, Machine, RiskScore
 from server.schemas import (
     AnomalyOut,
     DeviceDetailOut,
@@ -16,6 +18,7 @@ from server.schemas import (
     TimelineEntry,
 )
 from server.scoring.risk import level_for
+from server.scoring.trust import compute_trust
 
 
 def timeline_entries(events: list[Event]) -> list[TimelineEntry]:
@@ -28,6 +31,7 @@ def timeline_entries(events: list[Event]) -> list[TimelineEntry]:
             risk_score=e.risk_score.score if e.risk_score else None,
             risk_level=e.risk_score.level if e.risk_score else None,
             anomalies=[AnomalyOut.model_validate(a) for a in e.anomalies],
+            record_hash=e.record_hash,
         )
         for e in events
     ]
@@ -48,6 +52,7 @@ def device_summary(db: Session, device: Device) -> DeviceOut:
         func.count(Event.id), func.max(Event.timestamp), func.count(func.distinct(Event.machine_id))
     ).filter(Event.device_id == device.id).one()
     connects = db.query(func.count(Event.id)).filter(Event.device_id == device.id, Event.event_type == "connect").scalar()
+    trust = compute_trust(db, device)
     latest = db.query(RiskScore).filter(RiskScore.device_id == device.id).join(Event, Event.id == RiskScore.event_id).order_by(Event.timestamp.desc(), Event.id.desc()).first()
     return DeviceOut(
         id=device.id,
@@ -62,6 +67,9 @@ def device_summary(db: Session, device: Device) -> DeviceOut:
         risk_score=latest.score if latest else None,
         risk_level=latest.level if latest else None,
         known=connects >= 2,
+        trust_score=trust.score,
+        trust_level=trust.level,
+        trust_status=trust.status,
     )
 
 
@@ -75,7 +83,13 @@ def device_detail(db: Session, device: Device) -> DeviceDetailOut:
         .order_by(Machine.hostname)
         .all()
     ]
-    return DeviceDetailOut(**device_summary(db, device).model_dump(), descriptor_json=device.descriptor_json, machines=hostnames)
+    return DeviceDetailOut(
+        **device_summary(db, device).model_dump(),
+        descriptor_json=device.descriptor_json,
+        machines=hostnames,
+        trust_factors=compute_trust(db, device).factors,
+        trust_note=device.trust_note,
+    )
 
 
 def case_members(db: Session, inc: Incident) -> list[Incident]:
@@ -95,6 +109,15 @@ def incident_summary(db: Session, inc: Incident) -> IncidentOut:
     )
     count = db.query(func.count(IncidentEvent.event_id)).filter(IncidentEvent.incident_id == inc.id).scalar()
     label = lambda d: f"{d.vendor_id}:{d.product_id} {d.device_type or ''}".strip()
+    finding_names = [
+        n
+        for (n,) in db.query(Anomaly.name)
+        .join(IncidentEvent, IncidentEvent.event_id == Anomaly.event_id)
+        .filter(IncidentEvent.incident_id == inc.id)
+        .distinct()
+        .all()
+    ]
+    case_machines = sorted({m.machine.hostname for m in case_members(db, inc)})
     return IncidentOut(
         id=inc.id,
         device_id=inc.device_id,
@@ -110,7 +133,8 @@ def incident_summary(db: Session, inc: Incident) -> IncidentOut:
         event_count=count,
         case_id=inc.case_id,
         case_reason=inc.case_reason,
-        case_machines=sorted({m.machine.hostname for m in case_members(db, inc)}),
+        case_machines=case_machines,
+        mitre=techniques_for_all(finding_names, cross_machine=len(case_machines) > 1),
     )
 
 
@@ -161,6 +185,7 @@ def device_forensic_report(db: Session, device: Device) -> ForensicReportOut:
     return ForensicReportOut(
         report_id=report_id,
         generated_at=now_utc,
+        evidence_integrity=integrity.verify(db),
         device=detail,
         risk_history=[RiskOut.model_validate(r) for r in risk_scores],
         timeline=timeline,

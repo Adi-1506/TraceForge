@@ -1,6 +1,109 @@
+import { useState } from "react";
 import { api, usePolling } from "../api.js";
 import RiskBadge from "./RiskBadge.jsx";
 import Timeline from "./Timeline.jsx";
+import TrustBadge from "./TrustBadge.jsx";
+
+function ExportActions({ device: d }) {
+  const [result, setResult] = useState(null);
+  const run = async (format, filename) => {
+    try {
+      const sha256 = await api.exportDevice(d.id, format, filename);
+      setResult({ filename, sha256 });
+    } catch (e) {
+      setResult({ error: e.message });
+    }
+  };
+  return (
+    <div className="export-actions">
+      <button
+        className="btn btn-sm"
+        title="Download complete forensic JSON dossier"
+        onClick={() => run("json", `forensic_report_${d.vendor_id}_${d.product_id}.json`)}
+      >
+        Export JSON
+      </button>
+      <button
+        className="btn btn-sm"
+        title="Download event timeline CSV"
+        onClick={() => run("csv", `timeline_${d.vendor_id}_${d.product_id}.csv`)}
+      >
+        Export CSV
+      </button>
+      {result?.sha256 && (
+        <div className="muted small export-hash" title="Keep this to prove later that the saved file is unchanged">
+          SHA-256 <span className="mono">{result.sha256}</span>
+        </div>
+      )}
+      {result?.error && <div className="error small">{result.error}</div>}
+    </div>
+  );
+}
+
+const OVERRIDES = [
+  ["auto", "Auto"],
+  ["trusted", "Trusted"],
+  ["blocklisted", "Blocklisted"],
+];
+
+function TrustSection({ device, onChanged }) {
+  const [note, setNote] = useState(device.trust_note || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const save = async (status) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setTrust(device.id, status, note);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card-section">
+      <h3>
+        Device trust <TrustBadge level={device.trust_level} score={device.trust_score} status={device.trust_status} />
+      </h3>
+      <ul className="factors">
+        {device.trust_factors.map((f) => (
+          <li key={f.factor}>
+            <span className={`factor-weight ${f.weight < 0 ? "factor-negative" : ""}`}>
+              {f.weight > 0 ? `+${f.weight}` : f.weight}
+            </span>
+            <div>
+              <div className="mono">{f.factor}</div>
+              <div className="muted small">{f.explanation}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="muted small">
+        Trusted silences the "new machine" alert for a device that moves between machines; clone, descriptor and
+        behaviour checks still apply. Blocklisted flags every future connection. Nothing is blocked on the machine.
+      </p>
+      <input
+        className="search-input trust-note"
+        placeholder="Reason (optional), e.g. reported stolen"
+        value={note}
+        maxLength={500}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <div className="segmented">
+        {OVERRIDES.map(([value, label]) => (
+          <button key={value} disabled={saving} className={device.trust_status === value ? "active" : ""} onClick={() => save(value)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
 
 function RiskBreakdown({ history }) {
   // Latest connection that carries its own reasoning (disconnects just inherit).
@@ -89,31 +192,11 @@ export default function DevicePanel({ deviceId }) {
                 <span>seen on {d.machines.join(", ")}</span>
               </div>
             </div>
-            <div className="export-actions">
-              <a
-                href={api.exportDeviceUrl(deviceId, "json")}
-                target="_blank"
-                rel="noreferrer"
-                download={`forensic_report_${d.vendor_id}_${d.product_id}.json`}
-                className="btn btn-sm"
-                title="Download complete forensic JSON dossier"
-              >
-                Export JSON
-              </a>
-              <a
-                href={api.exportDeviceUrl(deviceId, "csv")}
-                target="_blank"
-                rel="noreferrer"
-                download={`timeline_${d.vendor_id}_${d.product_id}.csv`}
-                className="btn btn-sm"
-                title="Download event timeline CSV"
-              >
-                Export CSV
-              </a>
-            </div>
+            <ExportActions device={d} />
           </div>
         </div>
       )}
+      {d && <TrustSection key={d.id} device={d} onChanged={device.refresh} />}
       <RiskBreakdown history={risk.data} />
       <DescriptorSection descriptor={d?.descriptor_json} />
       <div className="card-section">

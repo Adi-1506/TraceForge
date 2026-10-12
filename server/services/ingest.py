@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from server import integrity
 from server.detection import fingerprint, ml_model
 from server.detection.rules import run_rules
 from server.incidents.correlate import correlate
@@ -61,6 +62,11 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
 
 
 def process_event(db: Session, payload: EventIngest) -> IngestOutcome:
+    with integrity.chain_lock:
+        return _process(db, payload)
+
+
+def _process(db: Session, payload: EventIngest) -> IngestOutcome:
     payload = payload.model_copy(update={"descriptor": fingerprint.enrich(payload.descriptor)})
     machine = get_or_create_machine(db, payload.machine_hostname)
     device, is_new_device = get_or_create_device(db, payload)
@@ -74,6 +80,7 @@ def process_event(db: Session, payload: EventIngest) -> IngestOutcome:
     )
     db.add(event)
     db.flush()
+    integrity.link(db, event)
 
     if payload.event_type == "connect":
         findings = run_rules(

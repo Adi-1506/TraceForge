@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from server.auth import current_user
 from server.database import get_db
 from server.models import Anomaly, Event
 from server.schemas import AnomalyOut
 
-router = APIRouter(prefix="/anomalies", tags=["anomalies"])
+router = APIRouter(prefix="/anomalies", tags=["anomalies"], dependencies=[Depends(current_user)])
 
 
 @router.get("", response_model=list[AnomalyOut])

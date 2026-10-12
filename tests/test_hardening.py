@@ -55,8 +55,11 @@ def test_fingerprint_ignores_identity_but_not_structure(client):
 def test_new_unit_with_structure_unlike_its_model_is_flagged(client):
     post(client, serial="4C530001230516", descriptor=STICK)
     out = post(client, serial="4C530001240516", descriptor=STICK_WITH_KEYBOARD, ts="2026-09-01T12:00:00Z")
-    assert "descriptor_model_mismatch" in names(client, out["event"]["device_id"])
-    assert out["risk_level"] == "high"
+    found = names(client, out["event"]["device_id"])
+    assert "descriptor_model_mismatch" in found
+    # It also replaced a unit of the same model on the same machine within 24 hours: a lookalike swap.
+    assert "same_model_new_serial" in found
+    assert out["risk_level"] == "critical"
 
 
 def test_known_device_changing_structure_is_flagged(client):

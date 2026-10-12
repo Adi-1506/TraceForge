@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field
+
+from server.detection.mitre import techniques_for
 
 from server.timeutil import as_utc
 
@@ -51,6 +53,11 @@ class AnomalyOut(ORM):
     explanation: str
     detail: dict | None = None
 
+    @computed_field
+    @property
+    def mitre(self) -> list[dict]:
+        return techniques_for(self.name)
+
 
 class RiskOut(ORM):
     event_id: int
@@ -69,6 +76,7 @@ class TimelineEntry(BaseModel):
     risk_score: float | None = None
     risk_level: str | None = None
     anomalies: list[AnomalyOut] = []
+    record_hash: str | None = None  # this event's link in the evidence chain
 
 
 class DeviceOut(BaseModel):
@@ -84,11 +92,21 @@ class DeviceOut(BaseModel):
     risk_score: float | None
     risk_level: str | None
     known: bool
+    trust_score: float
+    trust_level: str  # trusted | suspicious | untrusted | blocklisted
+    trust_status: str  # auto | trusted | blocklisted (investigator override)
 
 
 class DeviceDetailOut(DeviceOut):
     descriptor_json: dict | None
     machines: list[str]
+    trust_factors: list[dict] = []
+    trust_note: str | None = None
+
+
+class TrustUpdate(BaseModel):
+    status: Literal["auto", "trusted", "blocklisted"]
+    note: str | None = Field(default=None, max_length=500)
 
 
 class IncidentOut(BaseModel):
@@ -107,6 +125,7 @@ class IncidentOut(BaseModel):
     case_id: int | None = None
     case_reason: str | None = None
     case_machines: list[str] = []  # every machine in this incident's cross-machine case
+    mitre: list[dict] = []  # ATT&CK techniques behind this incident's findings
 
 
 class IncidentUpdate(BaseModel):
@@ -129,9 +148,28 @@ class StatsOut(BaseModel):
     ml_trained: bool
 
 
+class AuditOut(ORM):
+    id: int
+    timestamp: UTCDatetime
+    actor: str
+    action: str
+    target_type: str | None = None
+    target_id: int | None = None
+    detail: dict | None = None
+
+
+class IntegrityOut(BaseModel):
+    intact: bool
+    events_checked: int
+    chain_head: str
+    first_broken_event_id: int | None = None
+    problem: str | None = None
+
+
 class ForensicReportOut(BaseModel):
     report_id: str
     generated_at: UTCDatetime
+    evidence_integrity: IntegrityOut  # state of the whole evidence chain when the report was made
     device: DeviceDetailOut
     risk_history: list[RiskOut]
     timeline: list[TimelineEntry]

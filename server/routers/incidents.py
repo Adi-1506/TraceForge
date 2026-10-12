@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from server import audit
+from server.auth import actor, current_user, require_role
 from server.database import get_db
-from server.models import Incident
+from server.models import Incident, User
 from server.schemas import IncidentDetailOut, IncidentOut, IncidentUpdate
 from server.services.queries import incident_detail, incident_summary
 
-router = APIRouter(prefix="/incidents", tags=["incidents"])
+router = APIRouter(prefix="/incidents", tags=["incidents"], dependencies=[Depends(current_user)])
 
 
 def _get(db: Session, incident_id: int) -> Incident:
@@ -28,8 +30,15 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/{incident_id}", response_model=IncidentOut)
-def update_incident(incident_id: int, body: IncidentUpdate, db: Session = Depends(get_db)):
+def update_incident(
+    incident_id: int,
+    body: IncidentUpdate,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(require_role("investigator")),
+):
     incident = _get(db, incident_id)
+    changes = body.model_dump(exclude_none=True)
+    audit.record(db, actor(user), "incident.update", "incident", incident.id, previous_status=incident.status, **changes)
     if body.status is not None:
         incident.status = body.status
     if body.note is not None:

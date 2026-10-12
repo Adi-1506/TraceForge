@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -41,6 +42,10 @@ class Device(Base):
     device_type: Mapped[str | None] = mapped_column(String, nullable=True)
     descriptor_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Investigator override of the computed trust: auto | trusted (allowlist) | blocklisted.
+    trust_status: Mapped[str] = mapped_column(String, default="auto")
+    trust_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    trust_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     events: Mapped[list["Event"]] = relationship(back_populates="device", order_by="Event.timestamp")
 
@@ -54,6 +59,9 @@ class Event(Base):
     event_type: Mapped[str] = mapped_column(String)  # "connect" | "disconnect"
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Tamper-evident evidence chain (see server/integrity.py).
+    prev_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    record_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     device: Mapped["Device"] = relationship(back_populates="events")
     machine: Mapped["Machine"] = relationship(back_populates="events")
@@ -118,3 +126,38 @@ class IncidentEvent(Base):
 
     incident: Mapped["Incident"] = relationship(back_populates="links")
     event: Mapped["Event"] = relationship()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String)  # pbkdf2_sha256$iterations$salt$digest
+    role: Mapped[str] = mapped_column(String, default="investigator")  # investigator | admin
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True)  # SHA-256 of the bearer token
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["User"] = relationship()
+
+
+class AuditEntry(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    actor: Mapped[str] = mapped_column(String, index=True)  # username, "anonymous" with logins off, "agent"
+    action: Mapped[str] = mapped_column(String)
+    target_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
