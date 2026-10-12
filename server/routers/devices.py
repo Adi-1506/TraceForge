@@ -7,8 +7,10 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
+from server import audit
+from server.auth import actor, current_user, require_role
 from server.database import get_db
-from server.models import Device
+from server.models import Device, User
 from server.schemas import DeviceDetailOut, DeviceOut, ForensicReportOut, TimelineEntry, TrustUpdate
 from server.services.queries import (
     device_detail,
@@ -18,7 +20,7 @@ from server.services.queries import (
     timeline_entries,
 )
 
-router = APIRouter(prefix="/devices", tags=["devices"])
+router = APIRouter(prefix="/devices", tags=["devices"], dependencies=[Depends(current_user)])
 
 
 def _get(db: Session, device_id: int) -> Device:
@@ -67,9 +69,15 @@ def get_device(device_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{device_id}/trust", response_model=DeviceDetailOut)
-def set_trust(device_id: int, body: TrustUpdate, db: Session = Depends(get_db)):
+def set_trust(
+    device_id: int,
+    body: TrustUpdate,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(require_role("investigator")),
+):
     """Investigator override: allowlist (trusted), blocklist, or back to the computed trust (auto)."""
     device = _get(db, device_id)
+    audit.record(db, actor(user), "device.trust", "device", device.id, previous=device.trust_status, status=body.status, note=body.note)
     device.trust_status = body.status
     device.trust_note = body.note
     device.trust_updated_at = datetime.now(timezone.utc)

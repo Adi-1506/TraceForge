@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from server import integrity
+from server.auth import current_user
 from server.database import get_db
 from server.schemas import IntegrityOut
 
-router = APIRouter(prefix="/integrity", tags=["evidence"])
+router = APIRouter(prefix="/integrity", tags=["evidence"], dependencies=[Depends(current_user)])
 
 
 @router.get("/verify", response_model=IntegrityOut)

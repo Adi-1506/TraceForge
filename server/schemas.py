@@ -148,6 +148,16 @@ class StatsOut(BaseModel):
     ml_trained: bool
 
 
+class AuditOut(ORM):
+    id: int
+    timestamp: UTCDatetime
+    actor: str
+    action: str
+    target_type: str | None = None
+    target_id: int | None = None
+    detail: dict | None = None
+
+
 class IntegrityOut(BaseModel):
     intact: bool
     events_checked: int

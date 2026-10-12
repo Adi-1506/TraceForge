@@ -6,12 +6,14 @@ from server.database import get_db
 from server.detection import ml_model
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import StatsOut
-from server.security import require_api_key
+from server import audit
+from server.auth import current_user
+from server.security import admin_or_api_key
 
 router = APIRouter(tags=["system"])
 
 
-@router.get("/stats", response_model=StatsOut)
+@router.get("/stats", response_model=StatsOut, dependencies=[Depends(current_user)])
 def stats(db: Session = Depends(get_db)):
     high_risk = (
         db.query(func.count(func.distinct(RiskScore.device_id))).filter(RiskScore.level.in_(["high", "critical"])).scalar()
@@ -27,14 +29,17 @@ def stats(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/ml/status")
+@router.get("/ml/status", dependencies=[Depends(current_user)])
 def ml_status():
     return ml_model.status()
 
 
-@router.post("/ml/train", dependencies=[Depends(require_api_key)])
-def ml_train(db: Session = Depends(get_db)):
+@router.post("/ml/train")
+def ml_train(db: Session = Depends(get_db), who: str = Depends(admin_or_api_key)):
     try:
-        return ml_model.train(db)
+        status = ml_model.train(db)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    audit.record(db, who, "ml.train", rows=status["training_rows"], excluded=status["excluded_rows"], algorithm=status["algorithm"])
+    db.commit()
+    return status

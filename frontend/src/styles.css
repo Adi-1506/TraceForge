@@ -713,3 +713,51 @@ body {
   width: 100%;
   margin-bottom: 8px;
 }
+
+/* Logins, audit log, signed exports */
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.login-card {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.login-card h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.user-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.audit-warn td {
+  color: var(--critical);
+}
+.export-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.export-hash {
+  width: 100%;
+  max-width: 260px;
+  word-break: break-all;
+  text-align: right;
+}

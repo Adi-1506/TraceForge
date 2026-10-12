@@ -4,6 +4,42 @@ import RiskBadge from "./RiskBadge.jsx";
 import Timeline from "./Timeline.jsx";
 import TrustBadge from "./TrustBadge.jsx";
 
+function ExportActions({ device: d }) {
+  const [result, setResult] = useState(null);
+  const run = async (format, filename) => {
+    try {
+      const sha256 = await api.exportDevice(d.id, format, filename);
+      setResult({ filename, sha256 });
+    } catch (e) {
+      setResult({ error: e.message });
+    }
+  };
+  return (
+    <div className="export-actions">
+      <button
+        className="btn btn-sm"
+        title="Download complete forensic JSON dossier"
+        onClick={() => run("json", `forensic_report_${d.vendor_id}_${d.product_id}.json`)}
+      >
+        Export JSON
+      </button>
+      <button
+        className="btn btn-sm"
+        title="Download event timeline CSV"
+        onClick={() => run("csv", `timeline_${d.vendor_id}_${d.product_id}.csv`)}
+      >
+        Export CSV
+      </button>
+      {result?.sha256 && (
+        <div className="muted small export-hash" title="Keep this to prove later that the saved file is unchanged">
+          SHA-256 <span className="mono">{result.sha256}</span>
+        </div>
+      )}
+      {result?.error && <div className="error small">{result.error}</div>}
+    </div>
+  );
+}
+
 const OVERRIDES = [
   ["auto", "Auto"],
   ["trusted", "Trusted"],
@@ -156,28 +192,7 @@ export default function DevicePanel({ deviceId }) {
                 <span>seen on {d.machines.join(", ")}</span>
               </div>
             </div>
-            <div className="export-actions">
-              <a
-                href={api.exportDeviceUrl(deviceId, "json")}
-                target="_blank"
-                rel="noreferrer"
-                download={`forensic_report_${d.vendor_id}_${d.product_id}.json`}
-                className="btn btn-sm"
-                title="Download complete forensic JSON dossier"
-              >
-                Export JSON
-              </a>
-              <a
-                href={api.exportDeviceUrl(deviceId, "csv")}
-                target="_blank"
-                rel="noreferrer"
-                download={`timeline_${d.vendor_id}_${d.product_id}.csv`}
-                className="btn btn-sm"
-                title="Download event timeline CSV"
-              >
-                Export CSV
-              </a>
-            </div>
+            <ExportActions device={d} />
           </div>
         </div>
       )}
