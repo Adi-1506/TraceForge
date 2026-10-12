@@ -67,7 +67,7 @@ KINDS = [
     (
         {"unknown_device", "new_source_machine"},
         "Unfamiliar device",
-        ["Identify who connected the device and why.", "Mark it trusted if it is legitimate, so it stops raising alerts."],
+        ["Identify who connected the device and why.", "Mark it trusted if it is legitimate, so it stops being flagged."],
     ),
 ]
 

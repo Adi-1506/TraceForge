@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from server import alerts, integrity
+from server import integrity
 from server.detection import fingerprint, ml_model
 from server.detection.rules import check_keystroke_injection, check_large_transfer, run_rules
 from server.incidents.correlate import correlate
@@ -63,9 +63,7 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
 
 def process_event(db: Session, payload: EventIngest) -> IngestOutcome:
     with integrity.chain_lock:
-        outcome = _process(db, payload)
-    alerts.on_event(outcome)  # outside the lock: the live feed and messages never slow the chain
-    return outcome
+        return _process(db, payload)
 
 
 def _process(db: Session, payload: EventIngest) -> IngestOutcome:

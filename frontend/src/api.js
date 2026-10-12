@@ -79,7 +79,6 @@ export const api = {
   graph: (params) => get(`/graph?${new URLSearchParams(params)}`),
   importEvidence: (body) => send("POST", "/evidence/import", body),
   evidenceImports: () => get("/evidence/imports"),
-  recentAlerts: () => get("/alerts/recent"),
   mlStatus: () => get("/ml/status"),
   mlDrift: (days) => get(`/ml/drift?days=${days}`),
   authConfig: () => get("/auth/config"),

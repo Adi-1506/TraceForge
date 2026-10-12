@@ -159,10 +159,6 @@ Imported events go through the same rules, ML, trust, incidents and evidence cha
 
 Every incident opens with **What happened**: a headline naming the kind of attack, what happened first, how it spread (with the gaps between machines), why it scored what it did, the behavioural model's reasons, ATT&CK techniques, trust and status, and recommended next steps (`GET /incidents/{id}/story`). It is written from templates on purpose: every sentence comes from stored evidence, so it is reproducible and never states what the evidence does not show.
 
-## Live alerts
-
-Every event streams to the dashboard's bell and pop-up notices (`GET /alerts/stream`, Server-Sent Events). Events at or above `ALERT_MIN_LEVEL` (default `high`) also send a message to `ALERT_WEBHOOK_URL` (Slack, Discord, Teams, Mattermost) and/or Telegram (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`): once per incident, and again only if it escalates. Imported history never sends messages. `POST /alerts/test` (admin) checks the channels.
-
 ## Keystroke injection (typing speed)
 
 When a new device presents a keyboard, the agent records **when** its keys go down for 30 seconds and reports only timing statistics (count, rate, gaps, regularity); key codes are never read. People type with roughly 80-250 ms between keys and a lot of variation; `keystroke_injection` (+60) fires for 15+ keys at 25+ keys/s, or a median gap under 30 ms with almost no variation. Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
@@ -194,9 +190,6 @@ While a storage device is attached, the agent samples the OS's per-disk I/O coun
 | `RETRAIN_INTERVAL_HOURS` | `0` | scheduled retraining |
 | `TIMEZONE` | `Asia/Kolkata` | what "night" means, and the zone the dashboard shows |
 | `EXFIL_THRESHOLD_MB` | `500` | a copy this large to USB storage is flagged |
-| `ALERT_MIN_LEVEL` | `high` | `medium`, `high` or `critical` |
-| `ALERT_WEBHOOK_URL` | none | Slack / Discord / Teams / Mattermost incoming webhook |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | none | Telegram alerts |
 
 ## Measuring the ML model
 
@@ -239,8 +232,6 @@ These are simulated numbers: they show what each detector can separate, not accu
 | GET | `/graph?days=`, `/graph?incident_id=` | attack graph, or one case's events for replay |
 | GET | `/incidents/{id}/story` | plain-English account with next steps |
 | POST, GET | `/evidence/import`, `/evidence/imports` | import seized-machine USB history (investigator); the import record |
-| GET | `/alerts/stream`, `/alerts/recent`, `/alerts/config` | live feed (Server-Sent Events), recent events, channels |
-| POST | `/alerts/test` | send a test alert (admin) |
 | GET | `/ml/drift?days=` | model health and drift per feature |
 
 Run the tests with `python -m pytest`.
