@@ -213,3 +213,108 @@ def test_story_does_not_advise_blocklisting_a_device_that_already_is(client):
     client.put("/devices/1/trust", json={"status": "blocklisted"})
     steps = client.get(f"/incidents/{first['incident_id']}/story").json()["recommendations"]
     assert steps and not any(s.startswith("Blocklist") for s in steps)
+
+
+# --- 3.5 live alerts ------------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from server import alerts  # noqa: E402
+from server.config import settings  # noqa: E402
+
+
+@pytest.fixture()
+def channels(client, monkeypatch):
+    """A webhook and Telegram configured, with delivery captured instead of sent."""
+    alerts._alerted.clear()
+    alerts.broker.recent.clear()
+    monkeypatch.setattr(settings, "alert_webhook_url", "https://hooks.example/abc")
+    monkeypatch.setattr(settings, "telegram_bot_token", "bot-token")
+    monkeypatch.setattr(settings, "telegram_chat_id", "42")
+    sent = []
+    monkeypatch.setattr(alerts, "_post_json", lambda url, body: sent.append((url, body)))
+    monkeypatch.setattr(alerts._sender, "submit", lambda fn, *a: fn(*a))  # deliver inline for the test
+    return sent
+
+
+def test_every_event_reaches_the_live_feed_and_serious_ones_are_alerts(client, channels):
+    post(client)  # unknown device: medium, not an alert at the default "high"
+    post(client, ts="2026-09-02T03:00:00Z", **SPOOF)  # BadUSB: critical
+    recent = client.get("/alerts/recent").json()
+    assert [r["alert"] for r in recent] == [True, False]  # newest first
+    assert recent[0]["risk_level"] == "critical" and recent[0]["machine"] == "PC-1" and recent[0]["incident_id"]
+    assert client.get("/alerts/config").json() == {"min_level": "high", "channels": ["webhook", "telegram"]}
+
+
+def test_one_message_per_incident_on_every_channel_and_again_only_if_it_escalates(client, channels):
+    post(client, descriptor=MASS)
+    post(client, ts="2026-09-02T03:00:00Z", vid="0951", pid="1666", serial=None)  # missing serial: high
+    first_batch = len(channels)
+    assert first_batch == 2  # webhook + Telegram
+    url, body = channels[0]
+    assert url == "https://hooks.example/abc" and "TraceForge HIGH" in body["text"] and body["content"] == body["text"]
+    assert channels[1][0] == "https://api.telegram.org/botbot-token/sendMessage" and channels[1][1]["chat_id"] == "42"
+
+    post(client, ts="2026-09-02T03:01:00Z", vid="0951", pid="1666", serial=None)  # same incident, same level
+    assert len(channels) == first_batch
+    post(client, ts="2026-09-02T03:02:00Z", vid="0951", pid="1666", serial=None, **SPOOF)  # escalates to critical
+    assert len(channels) == first_batch + 2 and "CRITICAL" in channels[-1][1]["text"]
+
+
+def test_imported_history_is_in_the_feed_but_never_pages_anyone(client, channels):
+    r = client.post("/evidence/import", json={"filename": "setupapi.dev.log", "content_b64": b64("setupapi.dev.log"), "machine_hostname": "SEIZED"})
+    assert r.json()["incidents"]
+    assert channels == []
+    assert all(item["imported"] for item in client.get("/alerts/recent").json())
+
+
+def test_a_failing_channel_does_not_break_ingestion(client, monkeypatch):
+    alerts._alerted.clear()
+    monkeypatch.setattr(settings, "alert_webhook_url", "https://hooks.example/down")
+
+    def down(url, body):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(alerts, "_post_json", down)
+    monkeypatch.setattr(alerts._sender, "submit", lambda fn, *a: fn(*a))
+    post(client, descriptor=MASS)
+    assert post(client, ts="2026-09-02T03:00:00Z", **SPOOF)["risk_level"] == "critical"
+
+
+def test_admin_can_send_a_test_message(client, channels):
+    r = client.post("/alerts/test").json()
+    assert r == {"configured": ["webhook", "telegram"], "delivered": ["webhook", "telegram"]}
+
+
+def test_live_stream_needs_a_valid_token_when_logins_are_on(client, monkeypatch):
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    assert client.get("/alerts/stream", params={"token": "nope"}).status_code == 401
+
+
+def test_live_stream_delivers_events_as_server_sent_events(client):
+    import asyncio
+    import json as _json
+
+    from server.routers import alerts as alert_routes
+
+    class FakeRequest:
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 2
+
+    async def scenario():
+        from server.database import SessionLocal
+
+        response = await alert_routes.stream(FakeRequest(), token=None, db=SessionLocal())
+        chunks = response.body_iterator
+        first = await chunks.__anext__()
+        alerts.broker.publish({"event_id": 7, "alert": True})
+        second = await chunks.__anext__()
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first.startswith(": connected")
+    assert second.startswith("event: usb\ndata: ") and _json.loads(second.split("data: ", 1)[1])["event_id"] == 7

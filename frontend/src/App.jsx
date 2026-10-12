@@ -5,6 +5,7 @@ import DeviceList from "./components/DeviceList.jsx";
 import DevicePanel from "./components/DevicePanel.jsx";
 import EvidenceImport from "./components/EvidenceImport.jsx";
 import GraphView from "./components/GraphView.jsx";
+import LiveAlerts from "./components/LiveAlerts.jsx";
 import { IncidentPanel, IncidentTable } from "./components/IncidentList.jsx";
 import Login from "./components/Login.jsx";
 import StatCards from "./components/StatCards.jsx";
@@ -88,6 +89,11 @@ function Dashboard({ user, onLogout }) {
     setDeviceId(id);
     setTab("devices");
   };
+  const openIncident = (id) => {
+    setIncidentId(id);
+    setTab("incidents");
+    incidents.refresh();
+  };
 
   return (
     <div className="app">
@@ -105,6 +111,7 @@ function Dashboard({ user, onLogout }) {
             {ALGORITHMS[ml.data?.algorithm] || "ML"} · {ml.data?.trained ? "trained" : "not trained"}
           </span>
           <span className={`live ${offline ? "live-off" : ""}`}>{offline ? "server offline" : "live"}</span>
+          <LiveAlerts onOpenIncident={openIncident} />
           {user && (
             <span className="user-menu">
               <span className="chip" title={`Signed in as ${user.role}`}>
