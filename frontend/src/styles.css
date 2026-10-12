@@ -761,3 +761,96 @@ body {
   word-break: break-all;
   text-align: right;
 }
+
+/* Phase 3: attack graph and incident replay */
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.graph-toolbar h3 {
+  margin: 0;
+}
+.graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.graph-controls .segmented {
+  margin-bottom: 0;
+}
+.graph-slider {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent);
+}
+.graph-caption {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--row-hover);
+  font-size: 13px;
+  min-height: 20px;
+  margin-bottom: 8px;
+  border-left: 3px solid var(--border);
+}
+.graph-caption-medium { border-left-color: var(--medium); }
+.graph-caption-high { border-left-color: var(--high); }
+.graph-caption-critical { border-left-color: var(--critical); }
+.graph-mitre { color: var(--ml); }
+.graph-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.graph-heading {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  fill: var(--muted);
+}
+.graph-label {
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--text);
+}
+.graph-sub {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.graph-node rect {
+  fill: var(--panel);
+  stroke: var(--border);
+  stroke-width: 1.25;
+  transition: stroke 0.3s, fill 0.3s;
+}
+.node-idle { opacity: 0.45; }
+.node-low rect { stroke: var(--low); }
+.node-medium rect { stroke: var(--medium); fill: var(--medium-bg); }
+.node-high rect { stroke: var(--high); fill: var(--high-bg); }
+.node-critical rect { stroke: var(--critical); fill: var(--critical-bg); }
+.node-active rect { stroke-width: 3; }
+.graph-link {
+  fill: none;
+  opacity: 0.75;
+  transition: opacity 0.3s;
+}
+.link-low { stroke: var(--low); opacity: 0.35; }
+.link-medium { stroke: var(--medium); }
+.link-high { stroke: var(--high); }
+.link-critical { stroke: var(--critical); }
+.link-current {
+  opacity: 1;
+  stroke-dasharray: 8 6;
+  animation: link-flow 0.8s linear infinite;
+}
+@keyframes link-flow {
+  to { stroke-dashoffset: -28; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .link-current { animation: none; }
+}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, formatTime, usePolling } from "../api.js";
+import AttackGraph from "./AttackGraph.jsx";
 import MitreChips from "./MitreChips.jsx";
 import RiskBadge from "./RiskBadge.jsx";
 import Timeline from "./Timeline.jsx";
@@ -116,6 +117,39 @@ function Workflow({ incident, onChanged }) {
   );
 }
 
+function Replay({ incidentId }) {
+  const [graph, setGraph] = useState(null);
+  const [error, setError] = useState(null);
+  const open = async () => {
+    setError(null);
+    try {
+      setGraph(await api.graph({ incident_id: incidentId }));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="card-section">
+      <div className="graph-toolbar">
+        <h3>{graph?.title ? `Replay · ${graph.title}` : "Replay"}</h3>
+        {!graph && (
+          <button className="btn btn-sm" onClick={open}>
+            ▶ Replay attack
+          </button>
+        )}
+        {graph && (
+          <button className="btn btn-sm" onClick={() => setGraph(null)}>
+            Close
+          </button>
+        )}
+      </div>
+      {!graph && <p className="muted small">Watch this incident, and every linked incident on other machines, unfold step by step.</p>}
+      {error && <div className="error small">{error}</div>}
+      {graph && <AttackGraph data={graph} autoplay />}
+    </div>
+  );
+}
+
 export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onChanged }) {
   const { data, refresh } = usePolling(() => api.incident(incidentId), incidentId);
   if (!data) return <div className="empty">Loading incident…</div>;
@@ -152,6 +186,7 @@ export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onCh
           </ul>
         </div>
       )}
+      <Replay key={data.id} incidentId={data.id} />
       <CaseSection incident={data} onSelectIncident={onSelectIncident} />
       <Workflow
         key={data.id}

@@ -75,6 +75,7 @@ export const api = {
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),
   setTrust: (id, status, note) => send("PUT", `/devices/${id}/trust`, { status, note: note || null }),
   integrity: () => get("/integrity/verify"),
+  graph: (params) => get(`/graph?${new URLSearchParams(params)}`),
   mlStatus: () => get("/ml/status"),
   authConfig: () => get("/auth/config"),
   login: (username, password) => send("POST", "/auth/login", { username, password }),

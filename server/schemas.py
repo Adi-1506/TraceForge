@@ -158,6 +158,43 @@ class AuditOut(ORM):
     detail: dict | None = None
 
 
+class GraphMachine(BaseModel):
+    id: int
+    hostname: str
+    max_risk: float
+
+
+class GraphDevice(BaseModel):
+    id: int
+    label: str
+    serial_number: str | None = None
+    trust_level: str
+    max_risk: float
+
+
+class GraphEvent(BaseModel):
+    event_id: int
+    timestamp: UTCDatetime
+    event_type: str
+    device_id: int
+    machine_id: int
+    risk_score: float
+    risk_level: str
+    findings: list[str] = []
+    mitre: list[str] = []
+    incident_id: int | None = None
+
+
+class GraphOut(BaseModel):
+    title: str | None = None  # "Case #1" when replaying an incident's case
+    start: UTCDatetime | None = None
+    end: UTCDatetime | None = None
+    machines: list[GraphMachine]
+    devices: list[GraphDevice]
+    events: list[GraphEvent]  # time order: the replay steps through these
+    truncated: bool = False
+
+
 class IntegrityOut(BaseModel):
     intact: bool
     events_checked: int
