@@ -171,3 +171,45 @@ def test_import_needs_a_machine_name_when_the_file_has_none_and_rejects_unknown_
     assert junk.status_code == 400
     bad_tz = client.post("/evidence/import", json={"filename": "a", "content_b64": b64("kern.log"), "timezone": "Mars/Base"})
     assert bad_tz.status_code == 422
+
+
+# --- 3.4 plain-English incident story -------------------------------------------------------------
+
+
+def test_story_tells_a_badusb_spread_in_order_with_times_and_next_steps(client):
+    post(client, descriptor=MASS)
+    first = post(client, ts="2026-09-02T03:00:00Z", **SPOOF)
+    post(client, machine="PC-2", ts="2026-09-02T03:08:00Z", **SPOOF)
+    story = client.get(f"/incidents/{first['incident_id']}/story").json()
+
+    assert story["headline"] == "Possible keystroke-injection (BadUSB) attack: PC-1, PC-2"
+    text = " ".join(story["paragraphs"])
+    assert "08:30 on 02 Sep 2026" in text  # 03:00 UTC in Asia/Kolkata
+    assert "on record as a USB Mass Storage Device but now declared itself a USB Input Device" in text
+    assert "8 minutes later the same device appeared on PC-2" in text
+    assert "reached 2 machines" in text
+    assert "T1200 Hardware Additions" in text and "T1091" in text
+    assert any("compromised" in step for step in story["recommendations"])
+
+
+def test_story_for_an_attack_board_names_the_board(client):
+    out = post(client, vid="16D0", pid="0753", serial=None, dtype="USB Input Device", descriptor=HID)
+    story = client.get(f"/incidents/{out['incident_id']}/story").json()
+    assert "Digispark" in " ".join(story["paragraphs"])
+    assert story["headline"].startswith("Possible keystroke-injection")
+
+
+def test_story_includes_the_investigators_note_and_status(client):
+    post(client, descriptor=MASS)
+    first = post(client, ts="2026-09-02T03:00:00Z", **SPOOF)
+    client.patch(f"/incidents/{first['incident_id']}", json={"status": "investigating", "note": "Drive found in the lab"})
+    text = " ".join(client.get(f"/incidents/{first['incident_id']}/story").json()["paragraphs"])
+    assert "investigating" in text and "Investigator note: Drive found in the lab" in text
+
+
+def test_story_does_not_advise_blocklisting_a_device_that_already_is(client):
+    post(client, descriptor=MASS)
+    first = post(client, ts="2026-09-02T03:00:00Z", **SPOOF)
+    client.put("/devices/1/trust", json={"status": "blocklisted"})
+    steps = client.get(f"/incidents/{first['incident_id']}/story").json()["recommendations"]
+    assert steps and not any(s.startswith("Blocklist") for s in steps)

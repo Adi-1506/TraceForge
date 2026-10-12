@@ -5,7 +5,8 @@ from server import audit
 from server.auth import actor, current_user, require_role
 from server.database import get_db
 from server.models import Incident, User
-from server.schemas import IncidentDetailOut, IncidentOut, IncidentUpdate
+from server.incidents.story import build_story
+from server.schemas import IncidentDetailOut, IncidentOut, IncidentUpdate, StoryOut
 from server.services.queries import incident_detail, incident_summary
 
 router = APIRouter(prefix="/incidents", tags=["incidents"], dependencies=[Depends(current_user)])
@@ -27,6 +28,12 @@ def list_incidents(db: Session = Depends(get_db)):
 @router.get("/{incident_id}", response_model=IncidentDetailOut)
 def get_incident(incident_id: int, db: Session = Depends(get_db)):
     return incident_detail(db, _get(db, incident_id))
+
+
+@router.get("/{incident_id}/story", response_model=StoryOut)
+def get_story(incident_id: int, db: Session = Depends(get_db)):
+    """A plain-English account of the incident (and its case), written from the stored evidence."""
+    return build_story(db, _get(db, incident_id))
 
 
 @router.patch("/{incident_id}", response_model=IncidentOut)

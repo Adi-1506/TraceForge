@@ -136,6 +136,12 @@ class IncidentUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class StoryOut(BaseModel):
+    headline: str
+    paragraphs: list[str]
+    recommendations: list[str]
+
+
 class IncidentDetailOut(IncidentOut):
     timeline: list[TimelineEntry]
     related: list[IncidentOut] = []  # the other incidents in the same case

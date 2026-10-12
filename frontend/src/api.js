@@ -72,6 +72,7 @@ export const api = {
   exportDevice: (id, format, filename) => download(`/devices/${id}/export?format=${format}`, filename),
   incidents: () => get("/incidents"),
   incident: (id) => get(`/incidents/${id}`),
+  incidentStory: (id) => get(`/incidents/${id}/story`),
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),
   setTrust: (id, status, note) => send("PUT", `/devices/${id}/trust`, { status, note: note || null }),
   integrity: () => get("/integrity/verify"),

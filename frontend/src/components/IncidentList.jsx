@@ -117,6 +117,30 @@ function Workflow({ incident, onChanged }) {
   );
 }
 
+function Story({ incidentId }) {
+  const { data } = usePolling(() => api.incidentStory(incidentId), `story-${incidentId}`, 10000);
+  if (!data) return null;
+  return (
+    <div className="card-section story">
+      <h3>What happened</h3>
+      <p className="story-headline">{data.headline}</p>
+      {data.paragraphs.map((p, i) => (
+        <p key={i}>{p}</p>
+      ))}
+      {data.recommendations.length > 0 && (
+        <>
+          <h4>Recommended next steps</h4>
+          <ol>
+            {data.recommendations.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Replay({ incidentId }) {
   const [graph, setGraph] = useState(null);
   const [error, setError] = useState(null);
@@ -170,6 +194,7 @@ export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onCh
           Open device profile →
         </button>
       </div>
+      <Story incidentId={data.id} />
       {data.mitre?.length > 0 && (
         <div className="card-section">
           <h3>MITRE ATT&amp;CK techniques</h3>
