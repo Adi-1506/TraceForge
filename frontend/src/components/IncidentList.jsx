@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, formatTime, usePolling } from "../api.js";
+import MitreChips from "./MitreChips.jsx";
 import RiskBadge from "./RiskBadge.jsx";
 import Timeline from "./Timeline.jsx";
 
@@ -32,6 +33,11 @@ export function IncidentTable({ incidents, selectedId, onSelect }) {
               <span className="chip chip-case">case #{i.case_id} · {i.case_machines.length} machines</span>
             </div>
           )}
+          {i.mitre?.length > 0 && (
+            <div className="small">
+              <MitreChips techniques={i.mitre} />
+            </div>
+          )}
         </button>
       ))}
     </div>
@@ -55,7 +61,7 @@ function CaseSection({ incident, onSelectIncident }) {
               <RiskBadge level={r.level} score={r.max_score} />
             </div>
             <div className="muted small">
-              {r.device_label} on <span className="mono">{r.machine_hostname}</span> · {formatTime(r.start_time)}
+              {r.device_label} on <span className="mono">{r.machines.join(", ")}</span> · {formatTime(r.start_time)}
             </div>
           </button>
         ))}
@@ -130,6 +136,22 @@ export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onCh
           Open device profile →
         </button>
       </div>
+      {data.mitre?.length > 0 && (
+        <div className="card-section">
+          <h3>MITRE ATT&amp;CK techniques</h3>
+          <ul className="factors">
+            {data.mitre.map((t) => (
+              <li key={t.id}>
+                <MitreChips techniques={[t]} />
+                <div>
+                  <div>{t.name}</div>
+                  <div className="muted small">{t.tactic}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <CaseSection incident={data} onSelectIncident={onSelectIncident} />
       <Workflow
         key={data.id}

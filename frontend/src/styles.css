@@ -679,3 +679,37 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* Phase 2: trust, MITRE ATT&CK, evidence integrity */
+.chip-mitre {
+  color: var(--ml);
+  background: var(--ml-bg);
+  text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.chip-mitre:hover {
+  text-decoration: underline;
+}
+.mitre-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 4px;
+}
+.chip-tampered {
+  color: var(--critical);
+  background: var(--critical-bg);
+}
+.factor-negative {
+  color: var(--critical);
+}
+.evidence-hash {
+  opacity: 0.75;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.trust-note {
+  width: 100%;
+  margin-bottom: 8px;
+}

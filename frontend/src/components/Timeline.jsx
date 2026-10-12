@@ -1,4 +1,5 @@
 import { formatTime } from "../api.js";
+import MitreChips from "./MitreChips.jsx";
 import RiskBadge from "./RiskBadge.jsx";
 
 function Drivers({ drivers }) {
@@ -25,6 +26,7 @@ function Anomaly({ a }) {
         <span className={`chip chip-${a.source}`}>{a.source === "ml" ? (a.detail?.drivers ? "ML · SHAP" : "ML") : "rule"}</span>
         <span className="mono">{a.name}</span>
         <span className="muted">+{a.weight}</span>
+        <MitreChips techniques={a.mitre} />
       </div>
       <div>{a.explanation}</div>
       {a.detail?.drivers?.length > 0 && <Drivers drivers={a.detail.drivers} />}
@@ -51,7 +53,14 @@ export default function Timeline({ entries }) {
               </span>
               <RiskBadge level={e.risk_level} score={e.risk_score} />
             </div>
-            <div className="muted small">{formatTime(e.timestamp)}</div>
+            <div className="muted small">
+              {formatTime(e.timestamp)}
+              {e.record_hash && (
+                <span className="mono evidence-hash" title={`Evidence hash ${e.record_hash}`}>
+                  {" "}· sha256 {e.record_hash.slice(0, 12)}…
+                </span>
+              )}
+            </div>
             {e.anomalies.map((a) => (
               <Anomaly key={a.id} a={a} />
             ))}

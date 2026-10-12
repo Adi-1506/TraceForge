@@ -38,6 +38,9 @@ export const api = {
   incidents: () => get("/incidents"),
   incident: (id) => get(`/incidents/${id}`),
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),
+  setTrust: (id, status, note) => send("PUT", `/devices/${id}/trust`, { status, note: note || null }),
+  integrity: () => get("/integrity/verify"),
+  mlStatus: () => get("/ml/status"),
 };
 
 // Re-runs `load` every `ms`; returns { data, error, refresh }. `key` resets the data when the target changes.

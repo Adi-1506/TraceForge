@@ -5,6 +5,23 @@ import DevicePanel from "./components/DevicePanel.jsx";
 import { IncidentPanel, IncidentTable } from "./components/IncidentList.jsx";
 import StatCards from "./components/StatCards.jsx";
 
+const ALGORITHMS = { iforest: "Isolation Forest", ocsvm: "One-Class SVM" };
+
+function EvidenceChip({ result }) {
+  if (!result) return null;
+  if (result.intact)
+    return (
+      <span className="chip chip-known" title={`Hash chain head ${result.chain_head}`}>
+        ✓ Evidence intact · {result.events_checked} events
+      </span>
+    );
+  return (
+    <span className="chip chip-tampered" title={result.problem}>
+      ⚠ Evidence tampered at event #{result.first_broken_event_id}
+    </span>
+  );
+}
+
 export default function App() {
   const [tab, setTab] = useState("devices");
   const [deviceId, setDeviceId] = useState(null);
@@ -13,6 +30,8 @@ export default function App() {
   const stats = usePolling(api.stats, "stats");
   const devices = usePolling(api.devices, "devices");
   const incidents = usePolling(api.incidents, "incidents");
+  const integrity = usePolling(api.integrity, "integrity", 15000);
+  const ml = usePolling(api.mlStatus, "ml", 15000);
 
   const offline = stats.error && !stats.data;
 
@@ -29,8 +48,12 @@ export default function App() {
           <p className="muted">USB forensic investigation and device trust analysis · times in {DISPLAY_TZ}</p>
         </div>
         <div className="header-status">
-          <span className={`chip ${stats.data?.ml_trained ? "chip-known" : "chip-unknown"}`}>
-            ML model {stats.data?.ml_trained ? "trained" : "not trained"}
+          <EvidenceChip result={integrity.data} />
+          <span
+            className={`chip ${ml.data?.trained ? "chip-known" : "chip-unknown"}`}
+            title={ml.data?.trained ? `Trained on ${ml.data.training_rows} connections (${ml.data.excluded_rows} suspicious left out)` : "Rules only until the model is trained"}
+          >
+            {ALGORITHMS[ml.data?.algorithm] || "ML"} · {ml.data?.trained ? "trained" : "not trained"}
           </span>
           <span className={`live ${offline ? "live-off" : ""}`}>{offline ? "server offline" : "live"}</span>
         </div>

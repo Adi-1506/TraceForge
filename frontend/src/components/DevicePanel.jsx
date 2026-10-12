@@ -1,6 +1,73 @@
+import { useState } from "react";
 import { api, usePolling } from "../api.js";
 import RiskBadge from "./RiskBadge.jsx";
 import Timeline from "./Timeline.jsx";
+import TrustBadge from "./TrustBadge.jsx";
+
+const OVERRIDES = [
+  ["auto", "Auto"],
+  ["trusted", "Trusted"],
+  ["blocklisted", "Blocklisted"],
+];
+
+function TrustSection({ device, onChanged }) {
+  const [note, setNote] = useState(device.trust_note || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const save = async (status) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.setTrust(device.id, status, note);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card-section">
+      <h3>
+        Device trust <TrustBadge level={device.trust_level} score={device.trust_score} status={device.trust_status} />
+      </h3>
+      <ul className="factors">
+        {device.trust_factors.map((f) => (
+          <li key={f.factor}>
+            <span className={`factor-weight ${f.weight < 0 ? "factor-negative" : ""}`}>
+              {f.weight > 0 ? `+${f.weight}` : f.weight}
+            </span>
+            <div>
+              <div className="mono">{f.factor}</div>
+              <div className="muted small">{f.explanation}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="muted small">
+        Trusted silences the "new machine" alert for a device that moves between machines; clone, descriptor and
+        behaviour checks still apply. Blocklisted flags every future connection. Nothing is blocked on the machine.
+      </p>
+      <input
+        className="search-input trust-note"
+        placeholder="Reason (optional), e.g. reported stolen"
+        value={note}
+        maxLength={500}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <div className="segmented">
+        {OVERRIDES.map(([value, label]) => (
+          <button key={value} disabled={saving} className={device.trust_status === value ? "active" : ""} onClick={() => save(value)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
 
 function RiskBreakdown({ history }) {
   // Latest connection that carries its own reasoning (disconnects just inherit).
@@ -114,6 +181,7 @@ export default function DevicePanel({ deviceId }) {
           </div>
         </div>
       )}
+      {d && <TrustSection key={d.id} device={d} onChanged={device.refresh} />}
       <RiskBreakdown history={risk.data} />
       <DescriptorSection descriptor={d?.descriptor_json} />
       <div className="card-section">

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { formatTime } from "../api.js";
 import RiskBadge from "./RiskBadge.jsx";
+import TrustBadge from "./TrustBadge.jsx";
 
 export default function DeviceList({ devices, selectedId, onSelect }) {
   const [search, setSearch] = useState("");
@@ -13,6 +14,8 @@ export default function DeviceList({ devices, selectedId, onSelect }) {
       if (filter === "high" && d.risk_level !== "critical" && d.risk_level !== "high") return false;
       if (filter === "unknown" && d.known) return false;
       if (filter === "known" && !d.known) return false;
+      if (filter === "untrusted" && d.trust_level !== "untrusted" && d.trust_level !== "blocklisted") return false;
+      if (filter === "blocklisted" && d.trust_level !== "blocklisted") return false;
 
       if (!term) return true;
       return (
@@ -70,12 +73,25 @@ export default function DeviceList({ devices, selectedId, onSelect }) {
           >
             Known
           </button>
+          <button
+            className={`filter-btn ${filter === "untrusted" ? "active" : ""}`}
+            onClick={() => setFilter("untrusted")}
+          >
+            Untrusted
+          </button>
+          <button
+            className={`filter-btn ${filter === "blocklisted" ? "active" : ""}`}
+            onClick={() => setFilter("blocklisted")}
+          >
+            Blocklisted
+          </button>
         </div>
       </div>
 
       {filtered.length === 0 ? (
         <div className="empty">No devices match your search or filter.</div>
       ) : (
+        <div className="table-scroll">
         <table className="table">
           <thead>
             <tr>
@@ -84,6 +100,7 @@ export default function DeviceList({ devices, selectedId, onSelect }) {
               <th>Machines</th>
               <th>Last seen</th>
               <th>Risk</th>
+              <th>Trust</th>
             </tr>
           </thead>
           <tbody>
@@ -103,10 +120,14 @@ export default function DeviceList({ devices, selectedId, onSelect }) {
                 <td>
                   <RiskBadge level={d.risk_level} score={d.risk_score} />
                 </td>
+                <td>
+                  <TrustBadge level={d.trust_level} score={d.trust_score} status={d.trust_status} />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
