@@ -90,7 +90,8 @@ def _find_incident(db: Session, event: Event, suspicious: bool) -> Incident | No
 
 
 def _include_preceding_connect(db: Session, incident: Incident, event: Event, ts) -> None:
-    """A typing report that opens an incident is about the connection it followed: link that too."""
+    """A typing report or a disconnect (a large copy) that opens an incident is about the
+    connection it followed: link that too."""
     connect = (
         db.query(Event)
         .filter(
@@ -102,7 +103,9 @@ def _include_preceding_connect(db: Session, incident: Incident, event: Event, ts
         .order_by(Event.timestamp.desc(), Event.id.desc())
         .first()
     )
-    if connect is not None and ts - as_utc(connect.timestamp) <= WINDOW:
+    # A disconnect closes its connection however long the device was attached; a typing report
+    # only belongs to a connection it closely followed.
+    if connect is not None and (event.event_type == "disconnect" or ts - as_utc(connect.timestamp) <= WINDOW):
         db.add(IncidentEvent(incident_id=incident.id, event_id=connect.id))
         incident.start_time = min(as_utc(incident.start_time), as_utc(connect.timestamp))
 
@@ -127,7 +130,7 @@ def correlate(db: Session, event: Event, risk: RiskScore) -> Incident | None:
         db.flush()
         if others:
             link_case(incident, others)
-        if event.event_type == "typing":
+        if event.event_type in ("typing", "disconnect"):
             _include_preceding_connect(db, incident, event, ts)
 
     db.add(IncidentEvent(incident_id=incident.id, event_id=event.id))

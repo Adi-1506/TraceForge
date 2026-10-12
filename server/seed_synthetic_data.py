@@ -100,7 +100,7 @@ INJECTED_TYPING = {"keys": 310, "watched_s": 30.0, "first_key_after_s": 1.4, "du
                    "median_gap_ms": 6.0, "min_gap_ms": 5.8, "gap_cv": 0.021, "burst_fraction": 1.0}
 
 
-def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", vid=None, pid=None, rng=None, enum_ms=None, enum_order=None, typing=None):
+def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", vid=None, pid=None, rng=None, enum_ms=None, enum_order=None, typing=None, transfer=None):
     v, p, s, t, d = D[dev] if isinstance(dev, str) else dev
     d = d if descriptor == "keep" else descriptor
     return EventIngest(
@@ -114,6 +114,7 @@ def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", v
         descriptor=d,
         enumeration=enumeration_for(d, rng, enum_ms, enum_order) if kind == "connect" else None,
         typing=typing,
+        transfer=transfer,
     )
 
 
@@ -193,6 +194,13 @@ def attack_events(today: datetime) -> list[tuple[str, list[EventIngest]]]:
             ],
         ),
         (
+            "J. Data exfiltration: a known SanDisk drive is used at 23:40 and 3.2 GB is copied to it before it is unplugged",
+            [
+                ev("LAB-PC-01", "sandisk1", "connect", at(23, 40)),
+                ev("LAB-PC-01", "sandisk1", "disconnect", at(23, 58), transfer={"bytes_written": 3_435_973_837, "bytes_read": 41_943_040, "duration_s": 1080.0}),
+            ],
+        ),
+        (
             "E. Plain unknown device, otherwise consistent",
             [
                 ev("ADMIN-LAPTOP", ("045E", "07A5", "ZZ99FF31", INPUT, HID), "connect", at(11, 30)),
@@ -231,7 +239,7 @@ def main() -> None:
             print(f"\n{title}")
             for e in events:
                 out = process_event(db, e)
-                if e.event_type != "disconnect":
+                if e.event_type != "disconnect" or out.event.anomalies:
                     names = [a.name for a in out.event.anomalies]
                     print(f"  {e.timestamp.astimezone(tz):%H:%M:%S} score={out.risk.score:>5} {out.risk.level:<8} incident={out.incident.id if out.incident else '-'} {names}")
 

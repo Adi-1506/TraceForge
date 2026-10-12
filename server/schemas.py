@@ -31,6 +31,8 @@ class EventIngest(BaseModel):
     evidence: dict | None = None  # the imported file and line context, for chain of custody
     # Keystroke timing from a new keyboard (agent/keystrokes.py): counts and gaps only, never which keys.
     typing: dict | None = None
+    # Bytes moved while a storage device was attached (agent/transfer.py), sent with its disconnect.
+    transfer: dict | None = None
 
 
 class EventOut(ORM):
@@ -82,6 +84,8 @@ class TimelineEntry(BaseModel):
     risk_level: str | None = None
     anomalies: list[AnomalyOut] = []
     record_hash: str | None = None  # this event's link in the evidence chain
+    transfer: dict | None = None  # bytes moved while attached, on disconnects
+    source: str | None = None  # None for the live agent, "import:..." for imported evidence
 
 
 class DeviceOut(BaseModel):

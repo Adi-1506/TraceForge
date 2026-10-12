@@ -2,6 +2,13 @@ import { formatTime } from "../api.js";
 import MitreChips from "./MitreChips.jsx";
 import RiskBadge from "./RiskBadge.jsx";
 
+const bytes = (n) => {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+  return `${(n / 1024 ** i).toFixed(i < 2 ? 0 : 1)} ${units[i]}`;
+};
+
 function Drivers({ drivers }) {
   const max = Math.max(...drivers.map((d) => Math.abs(d.shap_value)), 1e-9);
   return (
@@ -55,6 +62,8 @@ export default function Timeline({ entries }) {
             </div>
             <div className="muted small">
               {formatTime(e.timestamp)}
+              {e.transfer && ` · wrote ${bytes(e.transfer.bytes_written)}, read ${bytes(e.transfer.bytes_read)}`}
+              {e.source && ` · ${e.source.replace("import:", "imported from ")}`}
               {e.record_hash && (
                 <span className="mono evidence-hash" title={`Evidence hash ${e.record_hash}`}>
                   {" "}· sha256 {e.record_hash.slice(0, 12)}…

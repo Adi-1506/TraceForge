@@ -43,6 +43,15 @@ KINDS = [
         ],
     ),
     (
+        {"large_transfer"},
+        "Possible data exfiltration to USB storage",
+        [
+            "Find out what was copied: check file-access and DLP logs on the machine for the connection window.",
+            "Recover the device if possible, and ask its owner why that much data was copied.",
+            "If the data was sensitive, follow the data-breach procedure.",
+        ],
+    ),
+    (
         {"blocklisted_device"},
         "A blocklisted device came back",
         ["Locate the device and whoever connected it.", "Check the machine it was connected to for changes made while it was attached."],
@@ -94,10 +103,11 @@ def build_story(db: Session, incident: Incident) -> dict:
     )
     connects = [e for e in events if e.event_type == "connect"]
     typing = [a for e in events if e.event_type == "typing" for a in e.anomalies if a.name == "keystroke_injection"]
+    copies = [(e, a) for e in events if e.event_type == "disconnect" for a in e.anomalies if a.name == "large_transfer"]
     if not connects:
         return {"headline": "Incident without recorded connections", "paragraphs": [], "recommendations": []}
 
-    findings = {a.name for e in connects for a in e.anomalies} | {a.name for a in typing}
+    findings = {a.name for e in connects for a in e.anomalies} | {a.name for a in typing} | {a.name for _, a in copies}
     headline, steps = next(((h, s) for names, h, s in KINDS if names & findings), ("Suspicious USB activity", []))
     first = connects[0]
     worst = max(connects, key=lambda e: e.risk_score.score if e.risk_score else 0)
@@ -127,6 +137,9 @@ def build_story(db: Session, incident: Incident) -> dict:
             f"{t.get('median_gap_ms'):g} ms between keys and almost no variation. People type with roughly 80 to 250 ms between keys: "
             "this was a machine typing, not a person. (Only the timing was recorded, never which keys.)"
         )
+
+    for e, a in copies:
+        paragraphs.append(f"When it was unplugged from {e.machine.hostname} at {_when(e.timestamp)}: {a.explanation}")
 
     # 2. How it spread.
     if len(machines_in_order) > 1:

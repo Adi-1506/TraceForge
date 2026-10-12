@@ -385,3 +385,72 @@ def test_agent_watches_only_devices_with_a_keyboard():
     dev = SimpleNamespace(device_type=None)
     assert has_keyboard(dev, boot_keyboard) and not has_keyboard(dev, mouse) and not has_keyboard(dev, stick)
     assert has_keyboard(SimpleNamespace(device_type="USB Input Device"), None)
+
+
+# --- 3.6 data exfiltration watch ------------------------------------------------------------------
+
+GB = 1024**3
+
+
+def unplug(client, written, ts, **kw):
+    body = {**make_event(kind="disconnect", ts=ts, **kw), "transfer": {"bytes_written": written, "bytes_read": 1000, "duration_s": 600}}
+    r = client.post("/events/ingest", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_big_copy_at_night_is_flagged_as_usb_exfiltration(client):
+    post(client, ts="2026-09-01T17:30:00Z")  # 23:00 IST
+    out = unplug(client, int(3.2 * GB), "2026-09-01T17:50:00Z")
+    found = next(a for a in client.get("/anomalies").json() if a["name"] == "large_transfer")
+    assert "3.2 GB was written to the device during 10 minutes attached" in found["explanation"]
+    assert "outside working hours (23:00 local)" in found["explanation"] and found["weight"] == 50
+    assert [t["id"] for t in found["mitre"]] == ["T1052.001"] and found["mitre"][0]["url"].endswith("/T1052/001/")
+    assert out["risk_score"] > 40 and out["incident_id"] is not None
+    story = client.get(f"/incidents/{out['incident_id']}/story").json()
+    assert story["headline"].startswith("Possible data exfiltration to USB storage")
+    timeline = client.get("/devices/1/timeline").json()
+    assert timeline[-1]["transfer"]["bytes_written"] == int(3.2 * GB)
+
+
+def test_ten_times_the_devices_usual_copy_is_flagged_even_below_the_size_limit(client):
+    for day in range(1, 5):
+        post(client, ts=f"2026-09-0{day}T05:00:00Z")
+        unplug(client, 20 * 1024**2, f"2026-09-0{day}T05:30:00Z")  # a usual 20 MB, in working hours
+    post(client, ts="2026-09-06T05:00:00Z")
+    unplug(client, 300 * 1024**2, "2026-09-06T05:30:00Z")
+    found = [a for a in client.get("/anomalies").json() if a["name"] == "large_transfer"]
+    assert len(found) == 1 and "its usual is 20.0 MB" in found[0]["explanation"] and found[0]["weight"] == 35
+
+
+def test_an_ordinary_copy_is_not_flagged(client):
+    post(client)
+    out = unplug(client, 80 * 1024**2, "2026-09-01T10:30:00Z")
+    assert out["risk_level"] == "medium" and "large_transfer" not in {a["name"] for a in client.get("/anomalies").json()}
+
+
+def test_transfer_meter_reports_only_byte_counts(monkeypatch):
+    from agent import transfer
+
+    readings = iter([(100, 1000), (150, 5000), (400, 9000)])
+    meter = transfer.TransferMeter.__new__(transfer.TransferMeter)
+    meter.started, meter.first, meter.last = 0.0, None, None
+    meter._read = lambda: next(readings)
+    meter.sample(), meter.sample(), meter.sample()
+    totals = meter.totals()
+    assert totals["bytes_read"] == 300 and totals["bytes_written"] == 8000 and set(totals) == {"bytes_read", "bytes_written", "duration_s"}
+
+
+def test_a_copy_after_hours_attached_still_links_the_connection_it_closes(client):
+    post(client, ts="2026-09-01T12:00:00Z")
+    out = unplug(client, 2 * GB, "2026-09-01T17:00:00Z")  # 5 hours later, 22:30 IST
+    detail = client.get(f"/incidents/{out['incident_id']}").json()
+    assert [e["event_type"] for e in detail["timeline"]] == ["connect", "disconnect"]
+
+
+def test_history_with_disconnects_that_had_no_transfer_does_not_break_the_check(client):
+    post(client)
+    client.post("/events/ingest", json=make_event(kind="disconnect", ts="2026-09-01T10:20:00Z"))  # no transfer data
+    post(client, ts="2026-09-02T17:30:00Z")
+    out = unplug(client, 2 * GB, "2026-09-02T17:50:00Z")
+    assert "large_transfer" in {a["name"] for a in client.get("/anomalies").json()} and out["incident_id"]

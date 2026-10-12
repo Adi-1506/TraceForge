@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # allow `python agent/agent.py`
 
 from agent import backends, keystrokes  # noqa: E402
+from agent.transfer import TransferMeter  # noqa: E402
 from agent.core import EnumerationTracker, RawEvent, Sender, build_payload  # noqa: E402
 from agent.descriptors import device_type_for, read_descriptor  # noqa: E402
 
@@ -34,6 +35,14 @@ RETRY_SECONDS = 10
 HOSTNAME = socket.gethostname()
 # Watch keystroke timing (never which keys) on new keyboards; TRACEFORGE_WATCH_TYPING=0 turns it off.
 WATCH_TYPING = os.environ.get("TRACEFORGE_WATCH_TYPING", "1") != "0"
+
+
+SAMPLE_SECONDS = 5  # how often attached storage devices' I/O counters are read
+
+
+def is_storage(dev, descriptor: dict | None) -> bool:
+    interfaces = (descriptor or {}).get("interfaces") or []
+    return any(i.get("interface_class") == 8 for i in interfaces) or "storage" in (dev.device_type or "").lower()
 
 
 def has_keyboard(dev, descriptor: dict | None) -> bool:
@@ -61,6 +70,8 @@ def run() -> None:
           f"{len(sender.queue)} spooled event(s). Ctrl+C to stop.")
     last_retry = time.monotonic()
     typing_reports: queue.Queue[dict] = queue.Queue()  # filled by watch threads, sent from this loop
+    meters: dict[str, TransferMeter] = {}  # storage devices attached now -> bytes moved since they connected
+    last_sample = time.monotonic()
 
     while True:
         try:
@@ -77,7 +88,11 @@ def run() -> None:
                 known = attached.pop(ev.key, None)
                 if not tracker.device_removed(ev.key) and known is not None:
                     known.wall = ev.wall
-                    report(sender.send(build_payload(HOSTNAME, known, "disconnect", None, None)), f"DISCONNECT {known.vendor_id}:{known.product_id}")
+                    payload = build_payload(HOSTNAME, known, "disconnect", None, None)
+                    meter = meters.pop(ev.key, None)
+                    if meter is not None and (moved := meter.totals()):
+                        payload["transfer"] = moved
+                    report(sender.send(payload), f"DISCONNECT {known.vendor_id}:{known.product_id}")
 
         for dev, enumeration in tracker.due(time.monotonic()):
             descriptor = read_descriptor(dev.vendor_id, dev.product_id, dev.serial_number)
@@ -88,6 +103,8 @@ def run() -> None:
             attached[dev.key] = dev
             label = f"   CONNECT {dev.vendor_id}:{dev.product_id} ({dev.device_type}){' [no libusb descriptor]' if not descriptor else ''}"
             report(sender.send(build_payload(HOSTNAME, dev, "connect", descriptor, enumeration)), label)
+            if is_storage(dev, descriptor):
+                meters[dev.key] = TransferMeter(dev.serial_number, dev.extra.get("sys_path"))
             if WATCH_TYPING and has_keyboard(dev, descriptor):
                 keystrokes.watch_in_background(
                     dev.vendor_id,
@@ -97,6 +114,11 @@ def run() -> None:
                         "typing": summary, "timestamp": datetime.now(timezone.utc).isoformat(),
                     }),
                 )
+
+        if meters and time.monotonic() - last_sample > SAMPLE_SECONDS:
+            last_sample = time.monotonic()
+            for meter in meters.values():
+                meter.sample()  # the counters vanish at unplug, so the last sample is what gets reported
 
         while not typing_reports.empty():
             payload = typing_reports.get()
