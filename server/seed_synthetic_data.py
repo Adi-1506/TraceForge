@@ -179,6 +179,13 @@ def attack_events(today: datetime) -> list[tuple[str, list[EventIngest]]]:
             ],
         ),
         (
+            "I. Programmable attack board: a Digispark (ATtiny85) appears on a lab PC as a keyboard, no serial",
+            [
+                ev("LAB-PC-02", ("16D0", "0753", None, INPUT, HID), "connect", at(13, 40)),
+                ev("LAB-PC-02", ("16D0", "0753", None, INPUT, HID), "disconnect", at(13, 41)),
+            ],
+        ),
+        (
             "E. Plain unknown device, otherwise consistent",
             [
                 ev("ADMIN-LAPTOP", ("045E", "07A5", "ZZ99FF31", INPUT, HID), "connect", at(11, 30)),

@@ -1,6 +1,6 @@
 # TraceForge
 
-USB forensic investigation and device trust analysis. A live agent on each monitored machine reports USB connect/disconnect events to a central server, which profiles devices, detects identity anomalies (rules + explainable ML), scores risk, and groups related suspicious events into incidents. A React dashboard shows it all.
+USB forensic investigation and device trust analysis. A live agent on each monitored machine reports USB connect/disconnect events to a central server, which profiles devices, detects identity anomalies (rules + explainable ML), scores risk and device trust, tags findings with MITRE ATT&CK, keeps a tamper-evident evidence log, and groups related suspicious events into incidents. A React dashboard shows it all, behind investigator logins when they are switched on.
 
 ```
 agent (Windows WMI events / Linux udev, libusb descriptors)
@@ -8,9 +8,12 @@ agent (Windows WMI events / Linux udev, libusb descriptors)
                                           |-- fingerprint.py  structural fingerprint of the descriptor tree
                                           |-- rules.py        identity / descriptor / source-machine checks
                                           |-- ml_model.py     Isolation Forest + SHAP, out-of-range check
+                                          |-- mitre.py        ATT&CK technique for each finding
                                           |-- risk.py         weighted score with recorded reasoning
-                                          '-- correlate.py    incidents per machine, cases across machines
-React dashboard <-- REST JSON (devices, descriptor profiles, timelines, incidents, cases)
+                                          |-- trust.py        device trust from its whole history
+                                          |-- correlate.py    incidents per machine, cases across machines
+                                          '-- integrity.py    SHA-256 hash chain over every event
+React dashboard <-- REST JSON + Bearer login (devices, trust, timelines, incidents, cases, audit log)
 ```
 
 ## Quick start (Docker, everything)
@@ -33,7 +36,13 @@ copy .env.example .env          # set API_KEY; DATABASE_URL=sqlite:///./tracefor
 cd frontend && npm install && npm run dev
 ```
 
-The seeder replays six weeks of normal usage, trains the ML model on it, then runs eight planted attack scenarios through the live pipeline: type-switching BadUSB device, serial cloning, behavioural burst, missing serial, plain unknown device, cross-machine spread, a model clone whose descriptor adds a keyboard interface, and enumeration drift.
+To require investigator logins, set `AUTH_ENABLED=true` in `.env`, create the first admin and restart the server:
+
+```bash
+.venv\Scripts\python -m server.manage create-user admin --role admin
+```
+
+The seeder replays six weeks of normal usage, trains the ML model on it, then runs nine planted attack scenarios through the live pipeline: type-switching BadUSB device, serial cloning, behavioural burst, missing serial, plain unknown device, cross-machine spread, a model clone whose descriptor adds a keyboard interface, enumeration drift, and a programmable attack board (Digispark) typing as a keyboard.
 
 ## Live agent
 
@@ -77,9 +86,16 @@ Trains on four weeks of synthetic normal usage, measures false alarms on two hel
 | rule | `descriptor_mismatch` - fingerprint or descriptor fields differ from this device's recorded profile | 35 |
 | rule | `descriptor_model_mismatch` - new unit whose fingerprint matches no known unit of the model it claims | 35 |
 | rule | `missing_serial` / `serial_format_mismatch` - differs from other units of the same model | 30 |
-| rule | `new_source_machine` - device never connected to this machine before | 15 |
-| ML | `behavioural_outlier` - Isolation Forest, explained with SHAP | 15-45 |
+| rule | `programmable_hid_board` - a BadUSB-capable board (Digispark, Teensy, Flipper Zero, Arduino Leonardo/Micro) presenting a keyboard | 40 |
+| rule | `blocklisted_device` - an investigator blocklisted this device | 60 |
+| rule | `same_model_new_serial` - new unit of a model that was on this machine in the last 24 h, under a different serial (lookalike swap) | 10 |
+| rule | `new_source_machine` - device never connected to this machine before (silenced for devices marked trusted) | 15 |
+| ML | `behavioural_outlier` - Isolation Forest or One-Class SVM, explained with SHAP | 15-45 |
 | ML | `unseen_behaviour` - a feature far outside anything in the training data | 30 |
+
+**MITRE ATT&CK.** Every finding lists its technique (`server/detection/mitre.py`): T1200 Hardware Additions, T1036 Masquerading, T1059 Command and Scripting Interpreter for a "drive" that types, and T1091 Replication Through Removable Media for a device spreading across machines. Incidents roll these up. Behavioural ML findings are left unmapped, because an unusual pattern alone does not name a technique.
+
+**Attack-board IDs are one weak signal.** VID and PID are firmware strings; tools like the Hak5 Key Croc copy the real keyboard's IDs by default. The structural fingerprint and the behavioural model are what catch a spoofed board.
 
 **Structural fingerprint.** The server hashes the descriptor tree without VID, PID or serial (`server/detection/fingerprint.py`). Those identifiers are firmware strings anyone can set; the interface/endpoint layout follows from what the hardware does. Two genuine units of a model share a fingerprint, so a clone that copies a SanDisk's identity but also exposes a keyboard interface is caught even on its first connection.
 
@@ -88,6 +104,52 @@ Trains on four weeks of synthetic normal usage, measures false alarms on two hel
 Score = 5 baseline + sum of weights, capped at 100. Levels: low < 25 <= medium < 50 <= high < 75 <= critical. Every factor is stored with its explanation, and ML findings carry their drivers (e.g. "time since last connection was 181x shorter than this device's historical baseline").
 
 **Incidents and cases.** A connection scoring 40+ opens an incident. Later events on the same machine join an active incident within 30 minutes if they involve a device already in it or are themselves suspicious; routine low-risk events are never dragged in. Disconnects inherit the score of the connection they close. Incidents on different machines within 24 hours that involve the same device, or a device presenting the same serial number, are grouped into a case. A device that has an open incident and then appears on another machine opens an incident there as well, even if that connection looks normal on its own. The dashboard shows the case and links its incidents. Investigators can set an incident to open / investigating / resolved and attach notes; resolved incidents stop collecting events.
+
+## Device trust
+
+Each device gets a trust score from 0 to 100 from its whole history (`server/scoring/trust.py`). It starts at 50, earns up to +30 for clean connections and up to +10 for time known, and loses half of its highest risk score in its last 30 days of activity plus 15 per unresolved incident. Levels: trusted (70+), suspicious (40-69), untrusted (below 40). A new device starts untrusted and earns trust. Every factor is returned with its reason.
+
+Investigators can override it (`PUT /devices/{id}/trust`, or the buttons on the device profile):
+- **Trusted** (allowlist) silences `new_source_machine` for a device that legitimately moves between machines; clone, descriptor and behaviour checks still apply.
+- **Blocklisted** sets trust to 0, adds `blocklisted_device` on every connection and keeps the device out of ML training.
+
+Nothing is blocked on the machine: TraceForge is an investigation platform, not a block/allow agent.
+
+## Evidence integrity
+
+Every event stores `record_hash = SHA-256(prev_hash + its canonical evidence)`, so all events form one hash chain (`server/integrity.py`). Editing, deleting or reordering any stored event breaks every hash after it. `GET /integrity/verify`, also shown in the dashboard header, says whether the chain is intact and names the first altered event. Databases created before this feature are chained at startup. Forensic exports carry each event's hash and the chain head, and send `X-Content-SHA256` for the exact file, which the dashboard shows after a download.
+
+## Logins, roles and audit log
+
+Off by default (`AUTH_ENABLED=false`) for local development. When on:
+
+| Who | Can |
+| --- | --- |
+| any signed-in user | read devices, incidents, timelines, stats and evidence integrity |
+| `investigator` | also change incident status and notes, and device trust |
+| `admin` | everything, plus retraining, creating users (`POST /auth/users`) and the audit log |
+| agents (API key) | send events; scripts with the key may also retrain |
+
+Passwords are salted PBKDF2-SHA256. Bearer tokens are random, last 12 hours and are stored only as SHA-256. The audit log (`GET /audit`, the admin's Audit log tab) records sign-ins (including failed ones), sign-outs, incident changes, trust changes, retraining and user creation.
+
+## ML training
+
+- `ML_ALGORITHM=iforest` (default) or `ocsvm` picks the live detector; a saved model trained with the other algorithm is ignored.
+- Connections that became part of an incident, and everything from blocklisted devices, are left out of the training rows, so attacks are never learned as normal. `/ml/status` reports how many were left out and when the model was trained.
+- `RETRAIN_INTERVAL_HOURS` retrains on stored history in the background; `0` (default) means only when `POST /ml/train` is called.
+
+## Configuration
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | PostgreSQL in Docker | or `sqlite:///./traceforge.db` |
+| `API_KEY` | none | shared secret agents send as `X-API-Key` |
+| `API_KEY_HASH` | none | store only the key's SHA-256 instead (`python -m server.manage hash-key`) |
+| `AUTH_ENABLED` | `false` | investigator logins and roles |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | browser origins allowed to call the API |
+| `ML_ALGORITHM` | `iforest` | `iforest` or `ocsvm` |
+| `RETRAIN_INTERVAL_HOURS` | `0` | scheduled retraining |
+| `TIMEZONE` | `Asia/Kolkata` | what "night" means, and the zone the dashboard shows |
 
 ## Measuring the ML model
 
@@ -113,22 +175,29 @@ These are simulated numbers: they show what each detector can separate, not accu
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/events/ingest` | agent pushes a USB event (needs `X-API-Key` when `API_KEY` is set) |
-| GET | `/devices?q=&risk_level=&known=`, `/devices/{id}` | profiles with latest risk, search and filtering |
+| POST | `/events/ingest` | agent pushes a USB event (needs `X-API-Key` when a key is configured) |
+| GET | `/devices?q=&risk_level=&known=&trust_level=`, `/devices/{id}` | profiles with latest risk and trust, search and filtering |
+| PUT | `/devices/{id}/trust` | set `auto`, `trusted` or `blocklisted`, with an optional note (investigator) |
 | GET | `/devices/{id}/timeline` | chronological events with anomalies |
 | GET | `/devices/{id}/export?format=json\|csv` | export complete forensic investigation dossier (JSON/CSV) |
 | GET | `/anomalies?device_id=&source=` | flagged anomalies with explanations |
 | GET | `/risk-scores/{device_id}` | score history with reasoning |
 | GET | `/incidents`, `/incidents/{id}` | correlated incidents, with their cross-machine case |
-| PATCH | `/incidents/{id}` | set status (`open`, `investigating`, `resolved`) and/or note |
+| PATCH | `/incidents/{id}` | set status (`open`, `investigating`, `resolved`) and/or note (investigator) |
+| GET | `/integrity/verify` | check the evidence hash chain |
 | GET | `/stats`, `/ml/status` | dashboard counters, model state |
-| POST | `/ml/train` | retrain the model on stored history (needs `X-API-Key`) |
+| POST | `/ml/train` | retrain the model on stored history (admin login or `X-API-Key`) |
+| GET, POST | `/auth/config`, `/auth/login`, `/auth/logout`, `/auth/me`, `/auth/users` | logins and user management |
+| GET | `/audit?actor=&action=` | audit log (admin) |
 
 Run the tests with `python -m pytest`.
 
 ## Known limits
 
-- The dashboard and read endpoints have no login; only writes are protected by the API key. Intended for a lab network.
+- No HTTPS of its own: put the server behind a TLS reverse proxy before using logins or keys outside a lab network.
+- One API key is shared by all agents; a single machine's key cannot be revoked on its own.
+- Ingestion chains one event at a time under an in-process lock, so run a single server process.
+- The evidence chain detects edits, deletions and reordering. Removing only the newest events is caught by comparing against a chain head noted earlier (every forensic report prints it).
 - The ML model has only been trained and measured on simulated data here. Retrain on real history before trusting its thresholds.
 - Windows WMI events are checked by the WMI service about once a second, so a connect can be reported up to ~1 s late (Linux udev events are immediate).
 - On Windows, interface nodes do not name their parent, so they are matched to the new device by VID/PID during the settle window.

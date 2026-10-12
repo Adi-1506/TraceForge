@@ -30,6 +30,12 @@ services:
       DATABASE_URL: postgresql+psycopg2://traceforge:traceforge@db:5432/traceforge
       # Agents must send this as X-API-Key. Override it in .env (API_KEY=...) for anything beyond a demo.
       API_KEY: ${API_KEY:-change-me}
+      API_KEY_HASH: ${API_KEY_HASH:-}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      ML_ALGORITHM: ${ML_ALGORITHM:-iforest}
+      RETRAIN_INTERVAL_HOURS: ${RETRAIN_INTERVAL_HOURS:-0}
+      TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
     ports:
       - "8000:8000"
     volumes:
