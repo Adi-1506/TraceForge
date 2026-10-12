@@ -987,3 +987,30 @@ body {
   cursor: pointer;
 }
 .toast.alert-critical { border-left-color: var(--critical); }
+
+/* Phase 3: model health */
+.health-reasons {
+  margin: 8px 0;
+  padding-left: 18px;
+  line-height: 1.5;
+}
+.health-hint {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--critical-bg);
+}
+.psi-cell {
+  min-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.psi-bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 4px;
+  min-width: 2px;
+}
+.psi-low { background: var(--low); }
+.psi-medium { background: var(--medium); }
+.psi-critical { background: var(--critical); }

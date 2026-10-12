@@ -81,6 +81,7 @@ export const api = {
   evidenceImports: () => get("/evidence/imports"),
   recentAlerts: () => get("/alerts/recent"),
   mlStatus: () => get("/ml/status"),
+  mlDrift: (days) => get(`/ml/drift?days=${days}`),
   authConfig: () => get("/auth/config"),
   login: (username, password) => send("POST", "/auth/login", { username, password }),
   logout: () => send("POST", "/auth/logout"),

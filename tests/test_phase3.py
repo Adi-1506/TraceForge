@@ -454,3 +454,65 @@ def test_history_with_disconnects_that_had_no_transfer_does_not_break_the_check(
     post(client, ts="2026-09-02T17:30:00Z")
     out = unplug(client, 2 * GB, "2026-09-02T17:50:00Z")
     assert "large_transfer" in {a["name"] for a in client.get("/anomalies").json()} and out["incident_id"]
+
+
+# --- 3.7 model health and drift -------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from server.detection import drift, ml_model  # noqa: E402
+
+START = datetime(2026, 7, 1, tzinfo=timezone.utc)
+
+
+def daily(client, first_day, days, hour_utc):
+    for d in range(first_day, first_day + days):
+        ts = START + timedelta(days=d, hours=hour_utc, minutes=(d * 13) % 50)
+        post(client, ts=ts.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+def test_psi_is_zero_for_the_same_distribution_and_large_for_a_shifted_one():
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    train = rng.normal(10, 1, 500)
+    profile = ml_model._profile(train)
+    assert drift.psi(profile, rng.normal(10, 1, 500)) < drift.SHIFTING
+    assert drift.psi(profile, rng.normal(14, 1, 500)) > drift.DRIFTED
+
+
+def test_unchanged_habits_keep_the_model_healthy(client):
+    daily(client, 0, 40, hour_utc=4)  # ~10:00 IST every day
+    assert client.post("/ml/train").status_code == 200
+    daily(client, 40, 25, hour_utc=4)
+    h = client.get("/ml/drift", params={"days": 25}).json()
+    assert h["status"] == "healthy", h["reasons"]
+    assert h["recent_connections"] >= 20 and len(h["features"]) == 9
+
+
+def test_moving_to_evening_use_is_reported_as_drift_with_the_features_that_moved(client):
+    daily(client, 0, 40, hour_utc=4)  # trained on mornings
+    daily(client, 40, 25, hour_utc=13)  # then ~18:30 IST every day, before the model existed (rules only)
+    from server.database import SessionLocal
+    from server.detection.features import build_training_matrix
+
+    with SessionLocal() as db:
+        rows = build_training_matrix(db)[:40]
+    import numpy as np
+
+    ml_model._bundle = {**ml_model.fit_bundle(np.array(rows)), "trained_at": datetime.now(timezone.utc).isoformat()}
+    h = client.get("/ml/drift", params={"days": 25}).json()
+    assert h["status"] == "retrain_recommended", h
+    moved = {f["feature"] for f in h["features"] if f["band"] == "drifted"}
+    assert "hour_of_day" in moved
+    assert any("Drifted" in r for r in h["reasons"])
+
+
+def test_drift_check_explains_when_it_cannot_judge(client):
+    assert client.get("/ml/drift").json()["status"] == "not_trained"
+    daily(client, 0, 40, hour_utc=4)
+    client.post("/ml/train")
+    legacy = dict(ml_model._bundle)
+    legacy.pop("profile")
+    ml_model._bundle = legacy
+    assert client.get("/ml/drift").json()["status"] == "unknown"
