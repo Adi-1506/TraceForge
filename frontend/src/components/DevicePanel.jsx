@@ -106,7 +106,8 @@ function TrustSection({ device, onChanged }) {
 }
 
 function RiskBreakdown({ history }) {
-  // Latest connection that carries its own reasoning (disconnects just inherit).
+  // The device's current risk. Typing reports and disconnects carry their attachment's factors
+  // (tagged carried_from); rows stored before that only say "inherited", so skip those.
   const latest = history?.find((h) => h.reasoning[0]?.factor !== "inherited");
   if (!latest) return null;
   return (
@@ -115,16 +116,36 @@ function RiskBreakdown({ history }) {
         Risk score <RiskBadge level={latest.level} score={latest.score} />
       </h3>
       <ul className="factors">
-        {latest.reasoning.map((r) => (
-          <li key={r.factor}>
+        {latest.reasoning.map((r, i) => (
+          <li key={`${r.factor}-${i}`}>
             <span className="factor-weight">+{r.weight}</span>
             <div>
-              <div className="mono">{r.factor}</div>
+              <div className="mono">
+                {r.factor}
+                {r.carried_from && <span className="muted small"> (from event #{r.carried_from})</span>}
+              </div>
               <div className="muted small">{r.explanation}</div>
+              {r.standard && <StandardLine s={r.standard} />}
             </div>
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function StandardLine({ s }) {
+  // How the weight was derived: OWASP Risk Rating of the indicated attack x evidence confidence.
+  return (
+    <div className="standard-line small" title={s.attack}>
+      <span className={`owasp owasp-${s.severity.toLowerCase()}`}>OWASP {s.severity}</span>
+      <span>
+        likelihood {s.likelihood} ({s.likelihood_level}) x impact {s.impact} ({s.impact_level})
+      </span>
+      <span>
+        confidence {s.confidence} x {s.severity_points} pts
+      </span>
+      {s.standard && <span className="muted">{s.standard}</span>}
     </div>
   );
 }

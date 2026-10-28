@@ -1,18 +1,45 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server import integrity, models  # noqa: F401  (models registers tables on Base.metadata)
 from server.config import settings
 from server.database import Base, SessionLocal, engine, upgrade_schema
 from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, system
+from server.auth import current_user
 from server.scheduler import retrain_loop
+from server.security import agent_keys_configured, api_key_configured
+
+
+log = logging.getLogger("traceforge")
+
+INSECURE_KEYS = {"change-me", "changeme", "traceforge", "secret"}
+
+
+def security_warnings() -> list[str]:
+    """Settings fine for a demo and wrong for evidence anyone will rely on. Logged at startup and
+    shown on GET /system/security so a deployment cannot be insecure without anybody noticing."""
+    out = []
+    if not settings.auth_enabled:
+        out.append("AUTH_ENABLED=false: anyone who can reach the API can read every case and change incidents.")
+    if not api_key_configured() and not agent_keys_configured():
+        out.append("No API_KEY, API_KEY_HASH or AGENT_KEYS: anyone can post forged USB events.")
+    elif (settings.api_key or "").strip().lower() in INSECURE_KEYS:
+        out.append("API_KEY is a well-known placeholder; generate one with python -m server.manage hash-key.")
+    if not agent_keys_configured():
+        out.append("No AGENT_KEYS: every agent shares one key, so one compromised machine can report as any other.")
+    if "traceforge:traceforge@" in settings.database_url:
+        out.append("The database still uses the default traceforge/traceforge credentials.")
+    return out
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    for warning in security_warnings():
+        log.warning("SECURITY: %s", warning)
     Base.metadata.create_all(bind=engine)
     upgrade_schema()
     with SessionLocal() as db:
@@ -42,3 +69,14 @@ for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, a
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/system/security", dependencies=[Depends(current_user)])
+def security_status():
+    """Which security settings are still at their development defaults (no secrets are returned)."""
+    return {
+        "auth_enabled": settings.auth_enabled,
+        "agent_keys": agent_keys_configured(),
+        "shared_key_allowed_for_ingest": not settings.require_agent_keys,
+        "warnings": security_warnings(),
+    }

@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     api_key: str | None = None
     # Production: store only the key's SHA-256 here instead (python -m server.manage hash-key).
     api_key_hash: str | None = None
+    # Per-agent keys, each bound to the one hostname it may report for: "HOST=sha256hex,HOST2=sha256hex"
+    # (python -m server.manage agent-key HOST prints a line). Stops one compromised machine from
+    # forging events for every other machine with the shared key.
+    agent_keys: str | None = None
+    # With per-agent keys in place, refuse the shared API_KEY on /events/ingest altogether.
+    require_agent_keys: bool = False
     # Investigator logins and roles (see server/auth.py). Off for local development.
     auth_enabled: bool = False
     # Comma-separated origins allowed to call the API from a browser (the dashboard's address).
@@ -23,6 +29,9 @@ class Settings(BaseSettings):
     retrain_interval_hours: float = 0
     # A copy to a USB storage device this large is flagged (large_transfer), as is 10x its usual.
     exfil_threshold_mb: float = 500
+    # Failed logins allowed per username (and per client address) in the window before /auth/login returns 429.
+    login_max_failures: int = 5
+    login_window_minutes: float = 15
 
 
 settings = Settings()

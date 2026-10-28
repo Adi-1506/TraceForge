@@ -923,3 +923,22 @@ body {
 .psi-low { background: var(--low); }
 .psi-medium { background: var(--medium); }
 .psi-critical { background: var(--critical); }
+
+/* Where a rule weight came from (server/scoring/standards.py) */
+.standard-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+  color: var(--muted, #8a8f98);
+}
+.owasp {
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+.owasp-critical { color: #e5484d; }
+.owasp-high { color: #f76b15; }
+.owasp-medium { color: #d6a100; }
+.owasp-low, .owasp-note { color: #46a758; }

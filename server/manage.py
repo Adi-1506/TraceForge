@@ -2,6 +2,7 @@
 
     python -m server.manage create-user <username> --role admin      (prompts for the password)
     python -m server.manage hash-key                                  (prints API_KEY_HASH for a key)
+    python -m server.manage agent-key LAB-PC-01                       (a key that may only report for that machine)
     python -m server.manage import setupapi.dev.log --machine SEIZED-PC [--registry usb.reg] [--dry-run]
 """
 
@@ -64,6 +65,8 @@ def main() -> None:
     cu.add_argument("username")
     cu.add_argument("--role", choices=ROLES, default="investigator")
     sub.add_parser("hash-key", help="generate (or hash) an agent API key for API_KEY_HASH")
+    ak = sub.add_parser("agent-key", help="generate a key bound to one machine, for AGENT_KEYS")
+    ak.add_argument("hostname")
     im = sub.add_parser("import", help="import USB evidence from a seized machine")
     im.add_argument("file", help="setupapi.dev.log, a .reg export of the USB Enum key, or a Linux kernel log")
     im.add_argument("--machine", help="the seized machine's hostname (Linux logs name it themselves)")
@@ -89,6 +92,11 @@ def main() -> None:
         print(f"Created {args.role} '{args.username}'.")
     elif args.command == "import":
         run_import(args)
+    elif args.command == "agent-key":
+        key = secrets.token_urlsafe(32)
+        print(f"On {args.hostname}:   TRACEFORGE_API_KEY={key}")
+        print(f"Add to AGENT_KEYS:  {args.hostname}={hashlib.sha256(key.encode()).hexdigest()}")
+        print("Entries are comma-separated. Set REQUIRE_AGENT_KEYS=true once every agent has its own key.")
     else:
         key = getpass.getpass("API key to hash (leave empty to generate one): ") or secrets.token_urlsafe(32)
         print(f"Give agents:      TRACEFORGE_API_KEY={key}")

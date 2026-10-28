@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from server.detection import signatures
 from server.models import Device, Event, Machine
 from server.config import settings
+from server.scoring.standards import weight
 from server.timeutil import as_utc, to_local
 
 # Descriptor fields that must stay stable for a given physical device. The fingerprint
@@ -47,7 +48,7 @@ def check_unknown_device(device: Device, is_new_device: bool, **_) -> list[Findi
         Finding(
             "rule",
             "unknown_device",
-            25,
+            weight("unknown_device"),
             f"Device {device.vendor_id}:{device.product_id} has never been seen before.",
         )
     ]
@@ -59,7 +60,7 @@ def check_device_type_mismatch(device: Device, payload, **_) -> list[Finding]:
             Finding(
                 "rule",
                 "device_type_mismatch",
-                40,
+                weight("device_type_mismatch"),
                 f"Identity {device.vendor_id}:{device.product_id}/{device.serial_number} was recorded as "
                 f"'{device.device_type}' but now declares itself as '{payload.device_type}'.",
                 {"recorded": device.device_type, "declared": payload.device_type},
@@ -88,7 +89,7 @@ def check_serial_reuse(db: Session, device: Device, **_) -> list[Finding]:
         Finding(
             "rule",
             "serial_reuse_across_models",
-            40,
+            weight("serial_reuse_across_models"),
             f"Serial {device.serial_number} is already registered to {o.vendor_id}:{o.product_id} "
             f"('{o.device_type}'); this device claims {device.vendor_id}:{device.product_id}.",
             {"other_device_id": o.id},
@@ -119,7 +120,7 @@ def check_serial_format(db: Session, device: Device, is_new_device: bool, **_) -
         Finding(
             "rule",
             name,
-            30,
+            weight(name),
             f"Other {device.vendor_id}:{device.product_id} units use a different serial format "
             f"than '{device.serial_number or '(none)'}'.",
             {"known_shapes": [list(s) for s in known_shapes]},
@@ -144,7 +145,7 @@ def check_descriptor_mismatch(device: Device, payload, **_) -> list[Finding]:
         Finding(
             "rule",
             "descriptor_mismatch",
-            35,
+            weight("descriptor_mismatch"),
             "USB descriptor structure differs from the recorded profile for this identity ("
             + ", ".join(sorted(diffs))
             + ").",
@@ -170,7 +171,7 @@ def check_descriptor_model_mismatch(db: Session, device: Device, payload, is_new
         Finding(
             "rule",
             "descriptor_model_mismatch",
-            35,
+            weight("descriptor_model_mismatch"),
             f"Descriptor structure does not match any known {device.vendor_id}:{device.product_id} unit "
             f"(fingerprint {current}, expected one of {', '.join(sorted(known))}).",
             {"fingerprint": current, "known_fingerprints": sorted(known)},
@@ -206,7 +207,7 @@ def check_same_model_new_serial(db: Session, device: Device, machine: Machine, e
         Finding(
             "rule",
             "same_model_new_serial",
-            10,
+            weight("same_model_new_serial"),
             f"{device.vendor_id}:{device.product_id} with serial '{sibling.serial_number or '(none)'}' was on "
             f"{machine.hostname} in the last 24 hours; this unit claims the same model with serial "
             f"'{device.serial_number or '(none)'}'.",
@@ -223,7 +224,7 @@ def check_programmable_hid_board(device: Device, payload, **_) -> list[Finding]:
         Finding(
             "rule",
             "programmable_hid_board",
-            40,
+            weight("programmable_hid_board"),
             f"{device.vendor_id}:{device.product_id} is a {board}, a programmable board often used for "
             f"keystroke injection, and it presents a keyboard interface.",
             {"board": board},
@@ -235,7 +236,7 @@ def check_blocklisted(device: Device, **_) -> list[Finding]:
     if device.trust_status != "blocklisted":
         return []
     note = f" ({device.trust_note})" if device.trust_note else ""
-    return [Finding("rule", "blocklisted_device", 60, f"This device was blocklisted by an investigator{note}.")]
+    return [Finding("rule", "blocklisted_device", weight("blocklisted_device"), f"This device was blocklisted by an investigator{note}.")]
 
 
 def check_new_machine(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
@@ -252,7 +253,7 @@ def check_new_machine(db: Session, device: Device, machine: Machine, event: Even
         Finding(
             "rule",
             "new_source_machine",
-            15,
+            weight("new_source_machine"),
             f"Device has never connected to {machine.hostname} before.",
         )
     ]
@@ -264,14 +265,35 @@ INJECTION_MIN_KEYS = 15
 INJECTION_RATE = 25.0  # keys per second
 INJECTION_MEDIAN_MS = 30.0
 INJECTION_MAX_CV = 0.35  # gap variation (stdev / mean); machine typing is very regular
+# Injection scripts often pause between bursts (Ducky "DELAY"), which drags the overall rate down
+# and the variation up. The bursts themselves give it away: gaps under 20 ms (agent BURST_MS) are
+# faster than a person can press separate keys, and a person produces only the odd one.
+INJECTION_MIN_BURST_GAPS = 15
+INJECTION_MIN_BURST_FRACTION = 0.5
 
 
 def check_keystroke_injection(typing: dict | None) -> list[Finding]:
-    """Runs on 'typing' reports, not connects: superhuman, machine-regular typing from a new keyboard."""
+    """Runs on 'typing' reports, not connects: superhuman typing from a newly connected keyboard.
+
+    Three independent signs, any of which is enough:
+      sustained rate   - more than 25 keys/s over the whole report
+      machine rhythm   - median gap under 30 ms with almost no variation
+      burst typing     - at least 15 gaps under 20 ms making up half the typing (survives DELAY pauses)
+    """
     if not typing or typing.get("keys", 0) < INJECTION_MIN_KEYS or "median_gap_ms" not in typing:
         return []
+    keys = typing["keys"]
     rate, median, cv = typing.get("rate_per_s", 0.0), typing["median_gap_ms"], typing.get("gap_cv", 1.0)
-    if rate < INJECTION_RATE and not (median < INJECTION_MEDIAN_MS and cv < INJECTION_MAX_CV):
+    burst = typing.get("burst_fraction") or 0.0
+    burst_gaps = round(burst * (keys - 1))
+    signs = []
+    if rate >= INJECTION_RATE:
+        signs.append(f"{rate:g} keys/s sustained")
+    if median < INJECTION_MEDIAN_MS and cv < INJECTION_MAX_CV:
+        signs.append(f"a median gap of {median:g} ms with almost no variation (gap CV {cv:g})")
+    if burst_gaps >= INJECTION_MIN_BURST_GAPS and burst >= INJECTION_MIN_BURST_FRACTION:
+        signs.append(f"{burst_gaps} gaps under 20 ms ({burst:.0%} of the typing)")
+    if not signs:
         return []
     started = typing.get("first_key_after_s")
     start = f", starting {started:g} s after it was plugged in" if started is not None else ""
@@ -279,10 +301,13 @@ def check_keystroke_injection(typing: dict | None) -> list[Finding]:
         Finding(
             "rule",
             "keystroke_injection",
-            60,
-            f"Typed {typing['keys']} keys at {rate:g} keys/s with a median gap of {median:g} ms and almost no variation "
-            f"(gap CV {cv:g}){start}. People type with roughly 80-250 ms between keys: this is a machine typing.",
-            {k: typing.get(k) for k in ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_after_s", "burst_fraction")},
+            weight("keystroke_injection"),
+            f"Typed {keys} keys with " + " and ".join(signs) + f"{start}. "
+            "People type with roughly 80-250 ms between keys: this is a machine typing.",
+            {
+                **{k: typing.get(k) for k in ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_after_s", "burst_fraction")},
+                "signs": len(signs),
+            },
         )
     ]
 
@@ -326,7 +351,7 @@ def check_large_transfer(db: Session, device: Device, event: Event, transfer: di
         Finding(
             "rule",
             "large_transfer",
-            50 if night else 35,
+            weight("large_transfer", {"night": night}),
             why + ". A large copy to removable storage is how data leaves on a USB stick.",
             {"bytes_written": written, "bytes_read": transfer.get("bytes_read"), "usual_bytes": usual, "night": night},
         )

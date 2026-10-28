@@ -9,6 +9,7 @@ agent (Windows WMI events / Linux udev, libusb descriptors)
                                           |-- rules.py        identity / descriptor / source-machine checks
                                           |-- ml_model.py     Isolation Forest + SHAP, out-of-range check
                                           |-- mitre.py        ATT&CK technique for each finding
+                                          |-- standards.py    rule weights = OWASP Risk Rating x evidence confidence
                                           |-- risk.py         weighted score with recorded reasoning
                                           |-- trust.py        device trust from its whole history
                                           |-- correlate.py    incidents per machine, cases across machines
@@ -80,20 +81,37 @@ Trains on four weeks of synthetic normal usage, measures false alarms on two hel
 
 | Layer | Finding | Weight |
 | --- | --- | --- |
-| rule | `unknown_device` - never seen before | 25 |
-| rule | `device_type_mismatch` - same identity, different declared type | 40 |
+| rule | `unknown_device` - never seen before | 22.5 |
+| rule | `device_type_mismatch` - same identity, different declared type | 41.2 |
 | rule | `serial_reuse_across_models` - serial belongs to a different VID/PID | 40 |
-| rule | `descriptor_mismatch` - fingerprint or descriptor fields differ from this device's recorded profile | 35 |
+| rule | `descriptor_mismatch` - fingerprint or descriptor fields differ from this device's recorded profile | 33.8 |
 | rule | `descriptor_model_mismatch` - new unit whose fingerprint matches no known unit of the model it claims | 35 |
 | rule | `missing_serial` / `serial_format_mismatch` - differs from other units of the same model | 30 |
-| rule | `programmable_hid_board` - a BadUSB-capable board (Digispark, Teensy, Flipper Zero, Arduino Leonardo/Micro) presenting a keyboard | 40 |
+| rule | `programmable_hid_board` - a BadUSB-capable board (Digispark, Teensy, Flipper Zero, Arduino Leonardo/Micro) presenting a keyboard | 41.2 |
 | rule | `blocklisted_device` - an investigator blocklisted this device | 60 |
 | rule | `same_model_new_serial` - new unit of a model that was on this machine in the last 24 h, under a different serial (lookalike swap) | 10 |
-| rule | `keystroke_injection` - a new keyboard typed at machine speed (typing report) | 60 |
-| rule | `large_transfer` - a large copy to USB storage, by size or 10x its usual (at disconnect) | 35-50 |
+| rule | `keystroke_injection` - a new keyboard typed at machine speed (typing report) | 67.5 |
+| rule | `large_transfer` - a large copy to USB storage, by size or 10x its usual (at disconnect) | 35 (50 at night) |
 | rule | `new_source_machine` - device never connected to this machine before (silenced for devices marked trusted) | 15 |
+| rule | `future_timestamp` - the agent dated the event more than 5 minutes after the server received it | 15 |
 | ML | `behavioural_outlier` - Isolation Forest or One-Class SVM, explained with SHAP | 15-45 |
 | ML | `unseen_behaviour` - a feature far outside anything in the training data | 30 |
+
+**Where the rule weights come from.** No weight is hand-picked. Each one is the OWASP Risk Rating of
+the attack the finding points to (8 likelihood x 4 impact factors, the factor-based form of NIST
+SP 800-30's likelihood x impact) multiplied by an evidence confidence, how sure we are that the finding
+means that attack:
+
+```
+weight = confidence x points for the OWASP severity (Low 10, Medium 25, High 50, Critical 75)
+```
+
+The points equal the level bands, so one fully confident Critical finding is critical on its own.
+`unknown_device`, for example, points to a rogue HID device (OWASP Critical) but most new devices are
+purchases, so c = 0.3 gives 22.5; it also implements NIST SP 800-53 MP-7 (no portable storage without an
+identifiable owner). The full rating tables, the reason behind every factor, the check of each
+confidence against data and the references are in [docs/STANDARDS.md](docs/STANDARDS.md); `GET /standards`
+returns them and the dashboard shows each weight's OWASP rating in the risk explanation.
 
 **MITRE ATT&CK.** Every finding lists its technique (`server/detection/mitre.py`): T1200 Hardware Additions, T1036 Masquerading, T1059 Command and Scripting Interpreter for a "drive" that types, and T1091 Replication Through Removable Media for a device spreading across machines. Incidents roll these up. Behavioural ML findings are left unmapped, because an unusual pattern alone does not name a technique.
 
@@ -103,9 +121,13 @@ Trains on four weeks of synthetic normal usage, measures false alarms on two hel
 
 **Behavioural features** (per connect, from the device's own history): time since the last connection and its ratio to this device's median gap, hour of day and distance from this device's usual hour, connections in the last hour and day, distinct machines, enumeration time relative to this device's median, and whether the interface enumeration order changed. Isolation Forest picks one random feature per split, so a single extreme feature can leave the overall score near normal; `unseen_behaviour` reports values more than one training-range beyond anything seen in training (or any change in a feature that never varied).
 
-Score = 5 baseline + sum of weights, capped at 100. Levels: low < 25 <= medium < 50 <= high < 75 <= critical. Every factor is stored with its explanation, and ML findings carry their drivers (e.g. "time since last connection was 181x shorter than this device's historical baseline").
+Score = 5 baseline + sum of weights, capped at 100. Levels: low < 25 <= medium < 50 <= high < 75 <= critical.
+A device's risk belongs to the whole attachment: typing reports and the disconnect carry the riskiest
+event of the same attachment forward (its factors are copied, tagged with the event they came from) and add
+their own, so a clean typing report cannot reset a suspicious keyboard to "low" and an injection found
+while typing does not vanish at unplug. Every factor is stored with its explanation, and ML findings carry their drivers (e.g. "time since last connection was 181x shorter than this device's historical baseline").
 
-**Incidents and cases.** A connection scoring 40+ opens an incident. Later events on the same machine join an active incident within 30 minutes if they involve a device already in it or are themselves suspicious; routine low-risk events are never dragged in. Disconnects inherit the score of the connection they close. Incidents on different machines within 24 hours that involve the same device, or a device presenting the same serial number, are grouped into a case. A device that has an open incident and then appears on another machine opens an incident there as well, even if that connection looks normal on its own. The dashboard shows the case and links its incidents. Investigators can set an incident to open / investigating / resolved and attach notes; resolved incidents stop collecting events.
+**Incidents and cases.** A connection scoring 40+ opens an incident. Later events on the same machine join an active incident within 30 minutes if they involve a device already in it or are themselves suspicious; routine low-risk events are never dragged in. Typing reports and disconnects carry the attachment's risk forward (above). Incidents on different machines within 24 hours that involve the same device, or a device presenting the same serial number, are grouped into a case. A device that has an open incident and then appears on another machine opens an incident there as well, even if that connection looks normal on its own. The dashboard shows the case and links its incidents. Investigators can set an incident to open / investigating / resolved and attach notes; resolved incidents stop collecting events.
 
 ## Device trust
 
@@ -161,11 +183,17 @@ Every incident opens with **What happened**: a headline naming the kind of attac
 
 ## Keystroke injection (typing speed)
 
-When a new device presents a keyboard, the agent records **when** its keys go down for 30 seconds and reports only timing statistics (count, rate, gaps, regularity); key codes are never read. People type with roughly 80-250 ms between keys and a lot of variation; `keystroke_injection` (+60) fires for 15+ keys at 25+ keys/s, or a median gap under 30 ms with almost no variation. Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
+When a new device presents a keyboard, the agent records **when** its keys go down and reports only timing statistics (count, rate, gaps, regularity, share of sub-20 ms gaps); key codes are never read, and mouse buttons are not counted. The watch starts the moment the HID interface appears (not after the connect has been sent, which takes longer than an injector waits) and lasts `TRACEFORGE_TYPING_WATCH_S` seconds (default 30). People type with roughly 80-250 ms between keys and a lot of variation; `keystroke_injection` fires for 15+ keys with any of:
+
+- a sustained rate of 25+ keys/s,
+- a median gap under 30 ms with almost no variation,
+- 15+ gaps under 20 ms making up at least half the typing. This one catches Rubber Ducky scripts that pause between bursts with `DELAY`, which drags the overall rate down and the variation up so the first two miss them.
+
+Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
 
 ## Data exfiltration watch
 
-While a storage device is attached, the agent samples the OS's per-disk I/O counters (`/sys/block/*/stat`, WMI disk counters) and sends the bytes written and read with the disconnect; no file names or contents are read. `large_transfer` (T1052.001 Exfiltration over USB) fires for a copy of `EXFIL_THRESHOLD_MB` (default 500) or 10x the device's usual, scoring higher outside working hours.
+While a storage device is attached, the agent samples (every `TRACEFORGE_SAMPLE_S`, default 2 s) the OS's per-disk I/O counters (`/sys/block/*/stat`, WMI disk counters) and sends the bytes written and read with the disconnect; no file names or contents are read. `large_transfer` (T1052.001 Exfiltration over USB) fires for a copy of `EXFIL_THRESHOLD_MB` (default 500) or 10x the device's usual, scoring higher outside working hours.
 
 ## Model health
 
@@ -184,12 +212,20 @@ While a storage device is attached, the agent samples the OS's per-disk I/O coun
 | `DATABASE_URL` | PostgreSQL in Docker | or `sqlite:///./traceforge.db` |
 | `API_KEY` | none | shared secret agents send as `X-API-Key` |
 | `API_KEY_HASH` | none | store only the key's SHA-256 instead (`python -m server.manage hash-key`) |
+| `AGENT_KEYS` | none | per-machine keys, `HOST=sha256,...`; each is accepted only for events naming that host (`python -m server.manage agent-key HOST`) |
+| `REQUIRE_AGENT_KEYS` | `false` | refuse the shared key on `/events/ingest` once every agent has its own |
 | `AUTH_ENABLED` | `false` | investigator logins and roles |
+| `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_MINUTES` | `5`, `15` | failed logins per username and per client address before `/auth/login` answers 429 |
+| `POSTGRES_PASSWORD` | `traceforge` | database password for docker-compose |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | browser origins allowed to call the API |
 | `ML_ALGORITHM` | `iforest` | `iforest` or `ocsvm` |
 | `RETRAIN_INTERVAL_HOURS` | `0` | scheduled retraining |
 | `TIMEZONE` | `Asia/Kolkata` | what "night" means, and the zone the dashboard shows |
 | `EXFIL_THRESHOLD_MB` | `500` | a copy this large to USB storage is flagged |
+| `TRACEFORGE_TYPING_WATCH_S`, `TRACEFORGE_SAMPLE_S` (agent) | `30`, `2` | keystroke watch window; storage counter sampling interval |
+
+The server logs a `SECURITY:` warning at startup for every setting still at its development default
+(no logins, no or placeholder keys, shared agent key, default database password); `GET /system/security` lists them.
 
 ## Measuring the ML model
 
@@ -211,11 +247,43 @@ Simulates ten weeks for 40 devices with their own habits, trains on weeks 1-7, a
 
 These are simulated numbers: they show what each detector can separate, not accuracy on real fleets. Once real agents have reported a few weeks of data, retrain on it with `POST /ml/train`.
 
+## Measuring the whole pipeline
+
+```bash
+python -m server.evaluate --thresholds 40       # detection per scenario, rules vs ML vs both
+python -m server.scoring.calibrate              # each finding's precision vs its confidence prior
+```
+
+`server/evaluate.py` trains on four weeks of synthetic normal use, holds out two weeks to measure false
+alarms, and replays 8 randomised trials of each attack and of three benign look-alikes through the live
+pipeline. At the incident threshold (score >= 40), default seed:
+
+| Scenario | Hybrid (what runs) | Rules only | ML only |
+| --- | --- | --- | --- |
+| type_switch (storage stick turns into a keyboard) | 100% | 100% | 25% |
+| serial_clone | 100% | 100% | 0% |
+| burst (rapid reconnects) | 100% | 25% | 100% |
+| missing_serial | 75% | 62.5% | 0% |
+| descriptor_swap | 100% | 12.5% | 12.5% |
+| keystroke_injection | 100% | 100% | 0% |
+| ducky_with_delays (bursts separated by DELAY) | 100% | 100% | 0% |
+| night_exfiltration (1-6 GB copied at night) | 100% | 100% | 0% |
+| *benign:* new unknown device | 0% | 0% | 0% |
+| *benign:* person typing on a known keyboard | 0% | 0% | 0% |
+| *benign:* 20-400 MB daytime copy | 0% | 0% | 0% |
+| held-out normal use (false alarm rate) | 1.3% | 0% | 0% |
+
+Across seeds 1-3 the attack scenarios stay at 100% except `missing_serial` (50-87.5%), and the only
+benign alerts are the ML model flagging 0-2 of 8 daytime copies. Neither layer is enough alone: rules
+miss bursts and descriptor swaps, ML misses clones, injection and exfiltration. For comparison, USBeSafe
+(RAID 2019) reports 95.7% detection at 0.21% false positives on real USB traffic; TraceForge's numbers are
+on synthetic data and are not directly comparable.
+
 ## API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/events/ingest` | agent pushes a USB event (needs `X-API-Key` when a key is configured) |
+| POST | `/events/ingest` | agent pushes a USB event (`X-API-Key`: the shared key or that machine's agent key) |
 | GET | `/devices?q=&risk_level=&known=&trust_level=`, `/devices/{id}` | profiles with latest risk and trust, search and filtering |
 | PUT | `/devices/{id}/trust` | set `auto`, `trusted` or `blocklisted`, with an optional note (investigator) |
 | GET | `/devices/{id}/timeline` | chronological events with anomalies |
@@ -233,13 +301,20 @@ These are simulated numbers: they show what each detector can separate, not accu
 | GET | `/incidents/{id}/story` | plain-English account with next steps |
 | POST, GET | `/evidence/import`, `/evidence/imports` | import seized-machine USB history (investigator); the import record |
 | GET | `/ml/drift?days=` | model health and drift per feature |
+| GET | `/standards` | OWASP rating of every attack class and the derivation of every rule weight |
+| GET | `/system/security` | which security settings are still at development defaults |
 
 Run the tests with `python -m pytest`.
 
 ## Known limits
 
 - No HTTPS of its own: put the server behind a TLS reverse proxy before using logins or keys outside a lab network.
-- One API key is shared by all agents; a single machine's key cannot be revoked on its own.
+- With only the shared `API_KEY`, any agent can report as any machine. Give each machine its own key (`AGENT_KEYS`) and set `REQUIRE_AGENT_KEYS=true`; then one machine's key can be revoked by removing its line.
+- The evidence chain proves events were not changed after they arrived, not that they were true when they arrived. The server records when each event was received and who sent it (`received_at`, `reported_by`) and flags events dated in the future; a late date is normal, because the agent spools events while the server is down.
+- The keystroke watch covers the first `TRACEFORGE_TYPING_WATCH_S` seconds after plug-in. A payload that waits longer before typing is not timed; raise the window if that matters. On Windows, two keyboards plugged in within the same window share one Raw Input registration, so only the later one is timed.
+- Transfer metering reads disk counters every `TRACEFORGE_SAMPLE_S` seconds and they vanish at unplug, so the last interval is not counted, and on Linux writes still in the page cache are counted only once flushed. Treat byte counts as a lower bound.
+- Rule confidences are analyst priors. `server.scoring.calibrate` measures each one on the synthetic scenarios, where every finding is more precise than its prior; real environments have more benign look-alikes, so the priors are kept conservative.
+- Failed-login throttling is kept in memory per server process (fine for the single-process deployment here).
 - Ingestion chains one event at a time under an in-process lock, so run a single server process.
 - The evidence chain detects edits, deletions and reordering. Removing only the newest events is caught by comparing against a chain head noted earlier (every forensic report prints it).
 - The ML model has only been trained and measured on simulated data here. Retrain on real history before trusting its thresholds.
