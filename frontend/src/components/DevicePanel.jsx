@@ -122,7 +122,9 @@ function RiskBreakdown({ history }) {
             <div>
               <div className="mono">
                 {r.factor}
-                {r.carried_from && <span className="muted small"> (from event #{r.carried_from})</span>}
+                {r.carried_from && r.factor !== "baseline" && (
+                  <span className="muted small"> (from event #{r.carried_from})</span>
+                )}
               </div>
               <div className="muted small">{r.explanation}</div>
               {r.standard && <StandardLine s={r.standard} />}
