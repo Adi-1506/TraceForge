@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatTime } from "../api.js";
+import { RISK_LEVELS, riskLabel, riskTone } from "../risk.js";
 
 // Devices on the left, machines on the right, one link per device-machine pair coloured by the
 // worst risk seen on it. The replay reveals connections in time order, so an attack can be
@@ -11,10 +12,9 @@ const DEV_X = 24;
 const MACH_X = 560;
 const NODE_W = 216;
 const NODE_H = 36;
-const LEVELS = ["low", "medium", "high", "critical"];
 const SPEEDS = [1, 3, 8];
 
-const worse = (a, b) => (LEVELS.indexOf(b) > LEVELS.indexOf(a) ? b : a);
+const worse = (a, b) => (RISK_LEVELS.indexOf(b) > RISK_LEVELS.indexOf(a) ? b : a);
 const short = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 export default function AttackGraph({ data, autoplay = false }) {
@@ -55,11 +55,11 @@ export default function AttackGraph({ data, autoplay = false }) {
   const reached = { device: {}, machine: {} };
   for (const e of shown) {
     const key = `${e.device_id}-${e.machine_id}`;
-    const link = (links[key] ||= { device: e.device_id, machine: e.machine_id, count: 0, level: "low" });
+    const link = (links[key] ||= { device: e.device_id, machine: e.machine_id, count: 0, level: "very_low" });
     link.count += 1;
     link.level = worse(link.level, e.risk_level);
-    reached.device[e.device_id] = worse(reached.device[e.device_id] || "low", e.risk_level);
-    reached.machine[e.machine_id] = worse(reached.machine[e.machine_id] || "low", e.risk_level);
+    reached.device[e.device_id] = worse(reached.device[e.device_id] || "very_low", e.risk_level);
+    reached.machine[e.machine_id] = worse(reached.machine[e.machine_id] || "very_low", e.risk_level);
   }
   const device = (id) => data.devices.find((d) => d.id === id);
   const machine = (id) => data.machines.find((m) => m.id === id);
@@ -99,12 +99,12 @@ export default function AttackGraph({ data, autoplay = false }) {
         </span>
       </div>
 
-      <div className={`graph-caption ${current ? `graph-caption-${current.risk_level}` : ""}`}>
+      <div className={`graph-caption ${current ? `graph-caption-${riskTone(current.risk_level)}` : ""}`}>
         {current ? (
           <>
             <b>{formatTime(current.timestamp)}</b> · {{ connect: "connected", disconnect: "disconnected", typing: "typed on" }[current.event_type] || current.event_type}{" "}
             <span className="mono">{device(current.device_id)?.label}</span> → <span className="mono">{machine(current.machine_id)?.hostname}</span> ·{" "}
-            {current.risk_level} {Math.round(current.risk_score)}
+            {riskLabel(current.risk_level)} {Math.round(current.risk_score)}
             {current.findings.length > 0 && <span className="muted"> · {current.findings.join(", ")}</span>}
             {current.mitre.length > 0 && <span className="mono graph-mitre"> {current.mitre.join(" ")}</span>}
           </>
@@ -130,10 +130,10 @@ export default function AttackGraph({ data, autoplay = false }) {
             <path
               key={key}
               d={`M${x1} ${y1} C${x1 + 110} ${y1}, ${x2 - 110} ${y2}, ${x2} ${y2}`}
-              className={`graph-link link-${l.level} ${isCurrent ? "link-current" : ""}`}
+              className={`graph-link link-${riskTone(l.level)} ${isCurrent ? "link-current" : ""}`}
               strokeWidth={1.5 + Math.min(4, Math.log2(l.count + 1))}
             >
-              <title>{`${l.count} event(s), worst ${l.level}`}</title>
+              <title>{`${l.count} event(s), worst ${riskLabel(l.level)}`}</title>
             </path>
           );
         })}
@@ -141,7 +141,7 @@ export default function AttackGraph({ data, autoplay = false }) {
           const lvl = reached.device[d.id];
           const active = current?.device_id === d.id;
           return (
-            <g key={`d${d.id}`} className={`graph-node ${lvl ? `node-${lvl}` : "node-idle"} ${active ? "node-active" : ""}`}>
+            <g key={`d${d.id}`} className={`graph-node ${lvl ? `node-${riskTone(lvl)}` : "node-idle"} ${active ? "node-active" : ""}`}>
               <rect x={DEV_X} y={pos.device[d.id]} width={NODE_W} height={NODE_H} rx="8" />
               <text x={DEV_X + 10} y={pos.device[d.id] + 15} className="graph-label">
                 {short(d.label, 30)}
@@ -156,7 +156,7 @@ export default function AttackGraph({ data, autoplay = false }) {
           const lvl = reached.machine[m.id];
           const active = current?.machine_id === m.id;
           return (
-            <g key={`m${m.id}`} className={`graph-node ${lvl ? `node-${lvl}` : "node-idle"} ${active ? "node-active" : ""}`}>
+            <g key={`m${m.id}`} className={`graph-node ${lvl ? `node-${riskTone(lvl)}` : "node-idle"} ${active ? "node-active" : ""}`}>
               <rect x={MACH_X} y={pos.machine[m.id]} width={NODE_W} height={NODE_H} rx="8" />
               <text x={MACH_X + 10} y={pos.machine[m.id] + 23} className="graph-label">
                 {m.hostname}

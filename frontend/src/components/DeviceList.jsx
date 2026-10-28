@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { formatTime } from "../api.js";
+import { isHighRisk } from "../risk.js";
 import RiskBadge from "./RiskBadge.jsx";
 import TrustBadge from "./TrustBadge.jsx";
 
@@ -11,7 +12,7 @@ export default function DeviceList({ devices, selectedId, onSelect }) {
     if (!devices) return [];
     const term = search.trim().toLowerCase();
     return devices.filter((d) => {
-      if (filter === "high" && d.risk_level !== "critical" && d.risk_level !== "high") return false;
+      if (filter === "high" && !isHighRisk(d.risk_level)) return false;
       if (filter === "unknown" && d.known) return false;
       if (filter === "known" && !d.known) return false;
       if (filter === "untrusted" && d.trust_level !== "untrusted" && d.trust_level !== "blocklisted") return false;
@@ -59,7 +60,7 @@ export default function DeviceList({ devices, selectedId, onSelect }) {
             className={`filter-btn ${filter === "high" ? "active" : ""}`}
             onClick={() => setFilter("high")}
           >
-            High/Critical
+            High/Very High
           </button>
           <button
             className={`filter-btn ${filter === "unknown" ? "active" : ""}`}

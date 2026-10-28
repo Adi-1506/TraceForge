@@ -1,4 +1,5 @@
 import { formatTime } from "../api.js";
+import { riskTone } from "../risk.js";
 import MitreChips from "./MitreChips.jsx";
 import RiskBadge from "./RiskBadge.jsx";
 
@@ -50,7 +51,7 @@ export default function Timeline({ entries }) {
   return (
     <ol className="timeline">
       {rows.map((e) => (
-        <li key={e.event_id} className={`tl-item tl-${e.risk_level || "none"}`}>
+        <li key={e.event_id} className={`tl-item tl-${riskTone(e.risk_level)}`}>
           <div className="tl-dot" />
           <div className="tl-body">
             <div className="tl-head">

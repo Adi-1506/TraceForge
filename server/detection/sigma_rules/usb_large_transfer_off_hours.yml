@@ -4,8 +4,7 @@ name: large_transfer_off_hours
 status: test
 description: |
   A large copy to USB storage (see large_transfer) made before 07:00 or from 21:00 local time.
-  It adds to the large_transfer finding rather than replacing it, as risk adds up in Risk-Based
-  Alerting.
+  It adds to the large_transfer finding rather than replacing it (risk aggregation, NIST SP 800-30).
 references:
   - https://attack.mitre.org/techniques/T1052/001/
 author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
