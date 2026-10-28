@@ -14,7 +14,7 @@ def anomaly_names(client, device_id):
 def test_new_device_is_unknown_and_scored_medium(client):
     out = post(client)
     assert out["is_new_device"] is True
-    assert out["risk_level"] == "medium"
+    assert out["risk_level"] == "moderate"
     assert out["incident_id"] is None
     assert anomaly_names(client, out["event"]["device_id"]) == {"unknown_device"}
 
@@ -24,7 +24,7 @@ def test_repeat_connection_on_same_machine_is_low_risk_and_known(client):
     post(client, kind="disconnect", ts="2026-09-01T11:00:00Z")
     out = post(client, ts="2026-09-02T10:00:00Z")
     assert out["is_new_device"] is False
-    assert out["risk_level"] == "low"
+    assert out["risk_level"] == "very_low"
     device = client.get(f"/devices/{out['event']['device_id']}").json()
     assert device["known"] is True
 
@@ -40,7 +40,7 @@ def test_device_type_and_descriptor_mismatch_is_critical_and_opens_incident(clie
     out = post(client, dtype="USB Input Device", descriptor=HID, ts="2026-09-02T03:00:00Z")
     names = anomaly_names(client, out["event"]["device_id"])
     assert {"device_type_mismatch", "descriptor_mismatch"} <= names
-    assert out["risk_level"] == "high" or out["risk_level"] == "critical"
+    assert out["risk_level"] in ("high", "very_high")
     assert out["incident_id"] is not None
 
 
@@ -87,7 +87,7 @@ def test_risk_reasoning_lists_every_factor(client):
     out = post(client)
     history = client.get(f"/risk-scores/{out['event']['device_id']}").json()
     factors = {r["factor"] for r in history[0]["reasoning"]}
-    assert factors == {"baseline", "unknown_device"}
+    assert factors == {"unknown_device"}  # no ad-hoc baseline: only Sigma rule and model findings score
     assert history[0]["score"] == sum(r["weight"] for r in history[0]["reasoning"])
 
 
@@ -174,7 +174,7 @@ def test_second_suspicious_device_on_same_machine_joins_but_benign_one_does_not(
     assert second["incident_id"] == first["incident_id"]
     # A routine known device on that machine in the same window is not dragged in.
     routine = post(client, ts="2026-09-02T14:06:00Z", **mouse)
-    assert routine["risk_level"] == "low" and routine["incident_id"] is None
+    assert routine["risk_level"] == "very_low" and routine["incident_id"] is None
 
 
 def test_incident_workflow_status_note_and_resolved_incidents_stop_collecting(client):
@@ -216,8 +216,8 @@ def test_device_search_and_filtering(client):
     assert r_mouse[0]["serial_number"] == "MOUSE-999"
 
     # Filter by risk level
-    r_med = client.get("/devices", params={"risk_level": "medium"}).json()
-    assert all(d["risk_level"] == "medium" for d in r_med)
+    r_med = client.get("/devices", params={"risk_level": "moderate"}).json()
+    assert all(d["risk_level"] == "moderate" for d in r_med)
 
     # Filter by known status (first connect is unknown)
     r_unknown = client.get("/devices", params={"known": "false"}).json()

@@ -4,6 +4,7 @@ SQLAlchemy==2.1.1
 psycopg2-binary==2.9.13
 pydantic==2.13.5
 pydantic-settings==2.15.0
+PyYAML==6.0.3  # Sigma detection rules (server/detection/sigma_rules)
 python-dotenv==1.2.3
 requests==2.34.2
 WMI==1.5.1; sys_platform == "win32"

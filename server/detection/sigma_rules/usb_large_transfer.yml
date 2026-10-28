@@ -1,0 +1,31 @@
+title: Large Copy to USB Storage
+id: bb877c99-6a02-470e-9f77-b736456001cb
+name: large_transfer
+status: test
+description: |
+  When a storage device is unplugged, the bytes written to it while attached are at least
+  EXFIL_THRESHOLD_MB (default 500 MB), or at least 10 times the device's usual copy and 50 MB.
+references:
+  - https://attack.mitre.org/techniques/T1052/001/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.exfiltration
+  - attack.t1052.001
+logsource:
+  product: traceforge
+  category: usb_disconnect
+detection:
+  over_threshold:
+    transfer.over_threshold: true
+  unusual:
+    transfer.unusual_for_device: true
+  condition: over_threshold or unusual
+falsepositives:
+  - Backups and large legitimate hand-overs (videos, datasets, installers)
+level: high
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 60
+  impact: 96
+  rationale: >-
+    Likelihood Moderate (G-4: a large copy is somewhat likely to be exfiltration; backups and hand-overs are common). Impact Very High (H-3: loss of a large volume of data).

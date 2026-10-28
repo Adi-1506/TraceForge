@@ -1,0 +1,39 @@
+title: Known USB Identity Declares a Different Device Type
+id: 5206c7a9-6147-4650-b593-e3a9a0fbb362
+name: device_type_mismatch
+status: test
+description: |
+  A device presents a VID/PID/serial identity on record as one type (for example a flash drive)
+  but now declares itself another (for example a keyboard). A storage device that starts typing
+  is the signature of a keystroke-injection (BadUSB) device.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+  - https://attack.mitre.org/techniques/T1036/
+  - https://attack.mitre.org/techniques/T1059/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.defense-evasion
+  - attack.t1036
+  - attack.execution
+  - attack.t1059
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.declared_type|exists: true
+    device.recorded_type|exists: true
+  same_type:
+    device.declared_type|fieldref: device.recorded_type
+  condition: selection and not same_type
+falsepositives:
+  - Composite devices whose driver reports a different class after a firmware or driver update
+level: high
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 85
+  impact: 90
+  rationale: >-
+    Likelihood High (G-4: a known drive that starts declaring a keyboard is highly likely to be an injection device). Impact High (H-3: injected keystrokes run commands with the user's rights).

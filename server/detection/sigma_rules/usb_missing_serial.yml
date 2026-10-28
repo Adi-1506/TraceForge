@@ -1,0 +1,32 @@
+title: New USB Unit Without a Serial Number Where Its Model Has One
+id: c2c06d7e-ab55-4b64-a8a4-4cad5b08760a
+name: missing_serial
+status: test
+description: |
+  Other units of the same VID/PID report serial numbers, but this new unit reports none, as a
+  lookalike built on a generic controller often does.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.first_seen: true
+    device.serial_fits_model: false
+  has_serial:
+    device.serial|exists: true
+  condition: selection and not has_serial
+falsepositives:
+  - Driver or hub issues that prevent the serial string from being read
+level: medium
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 35
+  impact: 85
+  rationale: >-
+    Likelihood Moderate (a missing serial is somewhat likely to mean a generic lookalike; it can also be a read error). Impact High (a lookalike of an approved model).

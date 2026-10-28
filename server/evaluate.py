@@ -73,7 +73,7 @@ def trial_events(kind: str, rng: random.Random, day: datetime):
 
 def source_scores(db, event_id: int) -> dict[str, float]:
     anomalies = db.query(Anomaly).filter(Anomaly.event_id == event_id).all()
-    total = lambda src: min(100.0, 5.0 + sum(a.weight for a in anomalies if src is None or a.source == src))
+    total = lambda src: min(100.0, sum(a.weight for a in anomalies if src is None or a.source == src))
     return {"hybrid": total(None), "rules": total("rule"), "ml": total("ml")}
 
 
@@ -85,7 +85,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--trials", type=int, default=8, help="trials per scenario")
-    parser.add_argument("--thresholds", type=float, nargs="+", default=[25.0, 40.0])
+    parser.add_argument("--thresholds", type=float, nargs="+", default=[21.0, 80.0])
     parser.add_argument("--show-misses", action="store_true", help="list attack trials the hybrid detector missed")
     args = parser.parse_args()
 

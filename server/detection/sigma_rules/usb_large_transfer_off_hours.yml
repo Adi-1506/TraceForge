@@ -1,0 +1,36 @@
+title: Large Copy to USB Storage Outside Working Hours
+id: 78327c5b-5212-478a-89b2-a00e0b2d2756
+name: large_transfer_off_hours
+status: test
+description: |
+  A large copy to USB storage (see large_transfer) made before 07:00 or from 21:00 local time.
+  It adds to the large_transfer finding rather than replacing it, as risk adds up in Risk-Based
+  Alerting.
+references:
+  - https://attack.mitre.org/techniques/T1052/001/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.exfiltration
+  - attack.t1052.001
+logsource:
+  product: traceforge
+  category: usb_disconnect
+detection:
+  over_threshold:
+    transfer.over_threshold: true
+  unusual:
+    transfer.unusual_for_device: true
+  early:
+    event.local_hour|lt: 7
+  late:
+    event.local_hour|gte: 21
+  condition: (over_threshold or unusual) and (early or late)
+falsepositives:
+  - Shift workers and staff working late on a deadline
+level: low
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 20
+  impact: 50
+  rationale: >-
+    Likelihood Low (working late is common). Impact Moderate (adds to the large_transfer finding, as risk aggregation in NIST SP 800-30 Rev. 1, Chapter 2, p. 13).
