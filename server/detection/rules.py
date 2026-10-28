@@ -4,7 +4,7 @@ Each event is first described as a flat document of fields. Facts that need hist
 identity was recorded as a flash drive", "other units of this model use a different serial
 format") are worked out here and stored as fields, the way a SIEM enriches events before its
 rules run. The Sigma rules then decide what is suspicious, and each match becomes a Finding whose
-weight is the rule's risk score (impact x confidence / 100) and whose explanation is the evidence
+weight is the rule's NIST SP 800-30 risk value (server/scoring/nist.py) and whose explanation is the evidence
 recorded for it here.
 
 Fields:
@@ -39,7 +39,7 @@ DESCRIPTOR_FIELDS = ("fingerprint", "pnp_class", "service", "interface_classes",
 class Finding:
     source: str
     name: str
-    weight: float  # risk score: impact x confidence / 100 (Splunk Risk-Based Alerting)
+    weight: float  # NIST SP 800-30 risk value, 0-100 (server/scoring/nist.py)
     explanation: str
     detail: dict = field(default_factory=dict)
 
