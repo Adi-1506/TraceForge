@@ -16,7 +16,7 @@ router = APIRouter(tags=["system"])
 @router.get("/stats", response_model=StatsOut, dependencies=[Depends(current_user)])
 def stats(db: Session = Depends(get_db)):
     high_risk = (
-        db.query(func.count(func.distinct(RiskScore.device_id))).filter(RiskScore.level.in_(["high", "critical"])).scalar()
+        db.query(func.count(func.distinct(RiskScore.device_id))).filter(RiskScore.level.in_(["high", "very_high"])).scalar()
     )
     return StatsOut(
         devices=db.query(func.count(Device.id)).scalar(),

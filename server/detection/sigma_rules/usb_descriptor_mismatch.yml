@@ -1,0 +1,33 @@
+title: USB Descriptor Structure Changed for a Known Identity
+id: 053cc45c-4308-45b5-ab8f-72b5257c1997
+name: descriptor_mismatch
+status: test
+description: |
+  The device's USB descriptor structure (fingerprint of interfaces and endpoints, PnP class,
+  driver service, interface classes or endpoint count) differs from the profile recorded for its
+  identity: different hardware is presenting a known device's IDs.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+  - https://attack.mitre.org/techniques/T1036/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.defense-evasion
+  - attack.t1036
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.descriptor_changed: true
+  condition: selection
+falsepositives:
+  - A firmware update that changes the device's interfaces
+level: high
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 80
+  impact: 85
+  rationale: >-
+    Likelihood High (different hardware behind a known identity is highly likely to be a clone; firmware updates are rare). Impact High (H-3: a clone passes identity-based controls).

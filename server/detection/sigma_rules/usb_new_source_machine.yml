@@ -1,0 +1,33 @@
+title: Known USB Device on a Machine It Has Never Used
+id: 2209793f-7c39-40b5-926c-c4e7388c4a44
+name: new_source_machine
+status: test
+description: |
+  A device already on record connects to a machine it has never connected to before: removable
+  media moving between machines is how infections and data spread. Devices an investigator
+  marked trusted may roam, so they are filtered out.
+references:
+  - https://attack.mitre.org/techniques/T1091/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.lateral-movement
+  - attack.t1091
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.first_seen: false
+    device.first_time_on_machine: true
+  filter_trusted:
+    device.trust_status: trusted
+  condition: selection and not filter_trusted
+falsepositives:
+  - Staff moving their own drive between their desktop and a lab or meeting-room machine
+level: low
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 20
+  impact: 50
+  rationale: >-
+    Likelihood Low (G-4: unlikely to be harmful; people move their own drives between machines). Impact Moderate (H-3: media moving between machines can spread malware).

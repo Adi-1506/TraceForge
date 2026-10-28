@@ -139,7 +139,8 @@ def build_story(db: Session, incident: Incident) -> dict:
         )
 
     for e, a in copies:
-        paragraphs.append(f"When it was unplugged from {e.machine.hostname} at {_when(e.timestamp)}: {a.explanation}")
+        late = next((o.explanation for o in e.anomalies if o.name == "large_transfer_off_hours"), "")
+        paragraphs.append(f"When it was unplugged from {e.machine.hostname} at {_when(e.timestamp)}: {a.explanation} {late}".rstrip())
 
     # 2. How it spread.
     if len(machines_in_order) > 1:
@@ -165,7 +166,7 @@ def build_story(db: Session, incident: Incident) -> dict:
 
     # 3. Why it scored what it did.
     if worst.risk_score:
-        factors = sorted((r for r in worst.risk_score.reasoning if r["factor"] != "baseline"), key=lambda r: -r["weight"])[:3]
+        factors = sorted((r for r in worst.risk_score.reasoning if r["factor"] != "no_findings"), key=lambda r: -r["weight"])[:3]
         why = "; ".join(f"{r['factor'].replace('_', ' ')} (+{r['weight']:g})" for r in factors)
         line = f"The highest-scoring connection reached {worst.risk_score.score:g}/100 ({worst.risk_score.level})"
         paragraphs.append(f"{line}, mainly from: {why}." if why else f"{line}.")

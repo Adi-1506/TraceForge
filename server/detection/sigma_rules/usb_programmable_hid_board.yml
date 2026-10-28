@@ -1,0 +1,42 @@
+title: Programmable Attack Board Presenting a Keyboard
+id: 69701984-b79a-4c39-9489-39e4a8d11d87
+name: programmable_hid_board
+status: test
+description: |
+  A device with the VID/PID of a programmable board commonly used for keystroke injection
+  (Digispark, Teensy, Flipper Zero, Arduino Leonardo or Micro) presents a keyboard interface.
+  These boards are legitimate hobby hardware, so the rule needs the keyboard interface too.
+references:
+  - https://homepages.uni-regensburg.de/~erc24492/TINY85_Arduino/TINY85_Arduino.html
+  - https://blog.didierstevens.com/2011/07/14/quickpost-blocking-and-detecting-a-teensy-dropper/
+  - https://appstream.debian.org/sid/main/metainfo/qflipper.html
+  - https://attack.mitre.org/techniques/T1059/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.execution
+  - attack.t1059
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.vid_pid:
+      - '16D0:0753'  # Digispark (ATtiny85)
+      - '16C0:05DF'  # Digispark HID (V-USB)
+      - '16C0:0482'  # Teensy (keyboard/mouse/joystick)
+      - '0483:5740'  # Flipper Zero
+      - '2341:8036'  # Arduino Leonardo
+      - '2341:8037'  # Arduino Micro
+    device.presents_keyboard: true
+  condition: selection
+falsepositives:
+  - Makers and electronics students programming their own boards
+level: high
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 80
+  impact: 90
+  rationale: >-
+    Likelihood High (a programmable attack board presenting a keyboard is highly likely to carry a payload). Impact High (H-3: injected keystrokes run commands with the user's rights).

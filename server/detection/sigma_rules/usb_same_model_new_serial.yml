@@ -1,0 +1,33 @@
+title: Lookalike USB Unit Replaces a Recent Unit on the Same Machine
+id: c6161e32-8237-42d4-939e-3d817b1d4d9a
+name: same_model_new_serial
+status: test
+description: |
+  A new unit of a model that was on this same machine in the last 24 hours connects under a
+  different serial: the pattern of a known drive being swapped for a lookalike carrying its VID/PID.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+  - https://attack.mitre.org/techniques/T1036/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.defense-evasion
+  - attack.t1036
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.first_seen: true
+    machine.same_model_other_serial_24h: true
+  condition: selection
+falsepositives:
+  - Several units of a popular model used on one machine (for example a box of identical drives)
+level: low
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 15
+  impact: 85
+  rationale: >-
+    Likelihood Low (G-4: unlikely to be harmful on its own; identical models are often used side by side). Impact High (a swapped-in lookalike).

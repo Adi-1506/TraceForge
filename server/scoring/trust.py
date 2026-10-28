@@ -13,10 +13,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from server.models import Device, Event, Incident, IncidentEvent, RiskScore
+from server.scoring.risk import level_for as risk_level
 from server.timeutil import as_utc
 
 BASE_TRUST = 50.0
-CLEAN_SCORE = 25.0  # a connection scoring below this counts as clean
 PER_CLEAN_CONNECTION, MAX_CLEAN_BONUS = 2.0, 30.0
 PER_DAY_KNOWN, MAX_AGE_BONUS = 1 / 3, 10.0
 RECENT_WINDOW = timedelta(days=30)
@@ -54,7 +54,7 @@ def compute_trust(db: Session, device: Device) -> Trust:
     recent_pool = [(t, s) for t, s, _ in scored]  # a typing report's risk counts against trust too
     factors = [{"factor": "baseline", "weight": BASE_TRUST, "explanation": "Starting trust for any device."}]
     if connects:
-        clean = sum(1 for _, s in connects if s < CLEAN_SCORE)
+        clean = sum(1 for _, s in connects if risk_level(s) in ("very_low", "low"))  # NIST Low or below counts as clean
         bonus = min(MAX_CLEAN_BONUS, clean * PER_CLEAN_CONNECTION)
         if bonus:
             factors.append({"factor": "clean_history", "weight": bonus, "explanation": f"{clean} clean connection(s) on record."})

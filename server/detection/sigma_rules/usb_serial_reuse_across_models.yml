@@ -1,0 +1,32 @@
+title: USB Serial Number Already Registered to Another Model
+id: 49ce3c8e-5332-43ed-8cf3-63f7bc6e2728
+name: serial_reuse_across_models
+status: test
+description: |
+  The device's serial number already belongs to a device with a different VID/PID: one serial
+  presented by two different models suggests a cloned or forged identity.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+  - https://attack.mitre.org/techniques/T1036/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.defense-evasion
+  - attack.t1036
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.serial_on_other_model: true
+  condition: selection
+falsepositives:
+  - Cheap devices that ship with a placeholder serial such as 0123456789
+level: high
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 80
+  impact: 85
+  rationale: >-
+    Likelihood High (one serial under two different models is highly likely to be a forged identity). Impact High (H-3: a forged identity defeats device allowlisting).

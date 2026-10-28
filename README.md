@@ -6,10 +6,11 @@ USB forensic investigation and device trust analysis. A live agent on each monit
 agent (Windows WMI events / Linux udev, libusb descriptors)
    --POST /events/ingest (X-API-Key)--> FastAPI --> PostgreSQL
                                           |-- fingerprint.py  structural fingerprint of the descriptor tree
-                                          |-- rules.py        identity / descriptor / source-machine checks
+                                          |-- rules.py        facts about each event, matched by Sigma rules
+                                          |-- sigma.py        Sigma rule engine (rules in sigma_rules/*.yml)
                                           |-- ml_model.py     Isolation Forest + SHAP, out-of-range check
                                           |-- mitre.py        ATT&CK technique for each finding
-                                          |-- risk.py         weighted score with recorded reasoning
+                                          |-- risk.py         RBA risk score, Elastic severity bands, reasoning
                                           |-- trust.py        device trust from its whole history
                                           |-- correlate.py    incidents per machine, cases across machines
                                           '-- integrity.py    SHA-256 hash chain over every event
@@ -72,30 +73,40 @@ set TRACEFORGE_API_KEY=<same as the server's API_KEY>
 .venv\Scripts\python -m server.evaluate --show-misses
 ```
 
-Trains on four weeks of synthetic normal usage, measures false alarms on two held-out weeks, runs randomised labelled attack trials, and compares hybrid vs rules-only vs ML-only plus Isolation Forest vs One-Class SVM.
+Trains on four weeks of synthetic normal usage, measures false alarms on two held-out weeks, runs randomised labelled attack trials, and compares hybrid vs rules-only vs ML-only plus Isolation Forest vs One-Class SVM. It reports at the medium (22) and high (48) band thresholds; with the default seed no benign new device and no held-out normal connection reaches high.
 
 **Timezone**: everything is stored in UTC. `TIMEZONE` in `.env` (default `Asia/Kolkata`) defines "night" for the ML hour-of-day feature and the seeder; the dashboard shows times in the same zone (`VITE_TIMEZONE` to change it).
 
 ## How detection works
 
-| Layer | Finding | Weight |
-| --- | --- | --- |
-| rule | `unknown_device` - never seen before | 25 |
-| rule | `device_type_mismatch` - same identity, different declared type | 40 |
-| rule | `serial_reuse_across_models` - serial belongs to a different VID/PID | 40 |
-| rule | `descriptor_mismatch` - fingerprint or descriptor fields differ from this device's recorded profile | 35 |
-| rule | `descriptor_model_mismatch` - new unit whose fingerprint matches no known unit of the model it claims | 35 |
-| rule | `missing_serial` / `serial_format_mismatch` - differs from other units of the same model | 30 |
-| rule | `programmable_hid_board` - a BadUSB-capable board (Digispark, Teensy, Flipper Zero, Arduino Leonardo/Micro) presenting a keyboard | 40 |
-| rule | `blocklisted_device` - an investigator blocklisted this device | 60 |
-| rule | `same_model_new_serial` - new unit of a model that was on this machine in the last 24 h, under a different serial (lookalike swap) | 10 |
-| rule | `keystroke_injection` - a new keyboard typed at machine speed (typing report) | 60 |
-| rule | `large_transfer` - a large copy to USB storage, by size or 10x its usual (at disconnect) | 35-50 |
-| rule | `new_source_machine` - device never connected to this machine before (silenced for devices marked trusted) | 15 |
-| ML | `behavioural_outlier` - Isolation Forest or One-Class SVM, explained with SHAP | 15-45 |
-| ML | `unseen_behaviour` - a feature far outside anything in the training data | 30 |
+Detection follows published security standards rather than hand-picked points:
 
-**MITRE ATT&CK.** Every finding lists its technique (`server/detection/mitre.py`): T1200 Hardware Additions, T1036 Masquerading, T1059 Command and Scripting Interpreter for a "drive" that types, and T1091 Replication Through Removable Media for a device spreading across machines. Incidents roll these up. Behavioural ML findings are left unmapped, because an unusual pattern alone does not name a technique.
+- **Rules are [Sigma](https://github.com/SigmaHQ/sigma-specification) rules**, the open, vendor-neutral format SIEMs (Splunk, Elastic, QRadar, Wazuh) use. Each is a YAML file in `server/detection/sigma_rules/` with the standard fields: title, UUID, status, description, references, author, date, logsource, detection, false positives, **level** (low / medium / high / critical) and ATT&CK **tags**. `server/detection/sigma.py` loads and checks them at startup and matches them against each event. Facts that need history ("this identity was recorded as a flash drive") are worked out first in `rules.py` and matched as fields, the way a SIEM enriches events before its rules run. `GET /rules` lists the catalogue.
+- **Risk score = impact x confidence / 100**, the [Splunk Risk-Based Alerting](https://help.splunk.com/splunk-enterprise-security-7/risk-based-alerting/7.2/introduction/how-risk-scores-work-in-splunk-enterprise-security) formula. Each Sigma rule gives its impact and confidence (a TraceForge extension field, `risk`); ML findings use a fixed impact and a confidence from the model.
+- **Levels are the [Elastic Security](https://www.elastic.co/docs/solutions/security/detect-and-alert/common-rule-settings) risk-score bands**: low 0-21, medium 22-47, high 48-73, critical 74-100. Every rule's score must fall in the band of its Sigma level, or the rule is refused at startup.
+
+| Layer | Finding (Sigma rule file) | Level | Impact x confidence | Risk |
+| --- | --- | --- | --- | --- |
+| rule | `unknown_device` - never seen before (SigmaHQ rates any USB plug-in low; a first sighting is one step more specific) | medium | 50 x 50 | 25 |
+| rule | `device_type_mismatch` - same identity, different declared type | high | 90 x 80 | 72 |
+| rule | `serial_reuse_across_models` - serial belongs to a different VID/PID | high | 80 x 70 | 56 |
+| rule | `descriptor_mismatch` - fingerprint or descriptor fields differ from this device's recorded profile | high | 80 x 70 | 56 |
+| rule | `descriptor_model_mismatch` - new unit whose fingerprint matches no known unit of the model it claims | high | 80 x 65 | 52 |
+| rule | `serial_format_mismatch` - new unit's serial format differs from other units of the same model | medium | 60 x 60 | 36 |
+| rule | `missing_serial` - new unit has no serial where other units of the model do | medium | 60 x 50 | 30 |
+| rule | `programmable_hid_board` - a BadUSB-capable board (Digispark, Teensy, Flipper Zero, Arduino Leonardo/Micro) presenting a keyboard | high | 90 x 70 | 63 |
+| rule | `blocklisted_device` - an investigator blocklisted this device | critical | 90 x 90 | 81 |
+| rule | `same_model_new_serial` - new unit of a model that was on this machine in the last 24 h, under a different serial (lookalike swap) | low | 40 x 40 | 16 |
+| rule | `keystroke_injection` - a new keyboard typed at machine speed (typing report) | critical | 95 x 90 | 85.5 |
+| rule | `large_transfer` - a large copy to USB storage, by size or 10x its usual (at disconnect) | high | 80 x 60 | 48 |
+| rule | `large_transfer_off_hours` - that copy was made before 07:00 or from 21:00 local (adds to `large_transfer`) | low | 40 x 40 | 16 |
+| rule | `new_source_machine` - device never connected to this machine before (filtered out for devices marked trusted) | low | 30 x 50 | 15 |
+| ML | `behavioural_outlier` - Isolation Forest or One-Class SVM, explained with SHAP | by score | 60 x 25-80 | 15-48 |
+| ML | `unseen_behaviour` - a feature far outside anything in the training data | medium | 60 x 50 | 30 |
+
+Impact and confidence are still judgements, but each is now stated, attached to a standard rule with its false positives and references, and checked against a standard scale, so it can be reviewed and changed in one YAML file.
+
+**MITRE ATT&CK.** Every finding lists its technique, taken from its Sigma rule's `attack.tNNNN` tags (`server/detection/mitre.py`): T1200 Hardware Additions, T1036 Masquerading, T1059 Command and Scripting Interpreter for a "drive" that types, and T1091 Replication Through Removable Media for a device spreading across machines. Incidents roll these up. Behavioural ML findings are left unmapped, because an unusual pattern alone does not name a technique.
 
 **Attack-board IDs are one weak signal.** VID and PID are firmware strings; tools like the Hak5 Key Croc copy the real keyboard's IDs by default. The structural fingerprint and the behavioural model are what catch a spoofed board.
 
@@ -103,13 +114,13 @@ Trains on four weeks of synthetic normal usage, measures false alarms on two hel
 
 **Behavioural features** (per connect, from the device's own history): time since the last connection and its ratio to this device's median gap, hour of day and distance from this device's usual hour, connections in the last hour and day, distinct machines, enumeration time relative to this device's median, and whether the interface enumeration order changed. Isolation Forest picks one random feature per split, so a single extreme feature can leave the overall score near normal; `unseen_behaviour` reports values more than one training-range beyond anything seen in training (or any change in a feature that never varied).
 
-Score = 5 baseline + sum of weights, capped at 100. Levels: low < 25 <= medium < 50 <= high < 75 <= critical. Every factor is stored with its explanation, and ML findings carry their drivers (e.g. "time since last connection was 181x shorter than this device's historical baseline").
+An event's score is the sum of its findings' risk, capped at 100 (in Risk-Based Alerting the risk of every finding about an object adds up), with the Elastic level for that total; there is no baseline, so an event no rule or model flags scores 0. Every factor is stored with its explanation, and ML findings carry their drivers (e.g. "time since last connection was 181x shorter than this device's historical baseline").
 
-**Incidents and cases.** A connection scoring 40+ opens an incident. Later events on the same machine join an active incident within 30 minutes if they involve a device already in it or are themselves suspicious; routine low-risk events are never dragged in. Disconnects inherit the score of the connection they close. Incidents on different machines within 24 hours that involve the same device, or a device presenting the same serial number, are grouped into a case. A device that has an open incident and then appears on another machine opens an incident there as well, even if that connection looks normal on its own. The dashboard shows the case and links its incidents. Investigators can set an incident to open / investigating / resolved and attach notes; resolved incidents stop collecting events.
+**Incidents and cases.** An incident opens in either of the two standard ways a SOC escalates: one event reaches the **high** band (48+), or, as in Risk-Based Alerting's risk incident rule, the risk of all findings about one device **adds up to 100 within 24 hours** (Splunk's default), so several low and medium findings that are harmless alone still escalate together. Later events on the same machine join an active incident within 30 minutes if they involve a device already in it or are themselves suspicious; routine low-risk events are never dragged in. Disconnects inherit the score of the connection they close. Incidents on different machines within 24 hours that involve the same device, or a device presenting the same serial number, are grouped into a case. A device that has an open incident and then appears on another machine opens an incident there as well, even if that connection looks normal on its own. The dashboard shows the case and links its incidents. Investigators can set an incident to open / investigating / resolved and attach notes; resolved incidents stop collecting events.
 
 ## Device trust
 
-Each device gets a trust score from 0 to 100 from its whole history (`server/scoring/trust.py`). It starts at 50, earns up to +30 for clean connections and up to +10 for time known, and loses half of its highest risk score in its last 30 days of activity plus 15 per unresolved incident. Levels: trusted (70+), suspicious (40-69), untrusted (below 40). A new device starts untrusted and earns trust. Every factor is returned with its reason.
+Each device gets a trust score from 0 to 100 from its whole history (`server/scoring/trust.py`). It starts at 50, earns up to +30 for clean (low-risk) connections and up to +10 for time known, and loses half of its highest risk score in its last 30 days of activity plus 15 per unresolved incident. Levels: trusted (70+), suspicious (40-69), untrusted (below 40). A new device starts untrusted and earns trust. Every factor is returned with its reason.
 
 Investigators can override it (`PUT /devices/{id}/trust`, or the buttons on the device profile):
 - **Trusted** (allowlist) silences `new_source_machine` for a device that legitimately moves between machines; clone, descriptor and behaviour checks still apply.
@@ -161,11 +172,11 @@ Every incident opens with **What happened**: a headline naming the kind of attac
 
 ## Keystroke injection (typing speed)
 
-When a new device presents a keyboard, the agent records **when** its keys go down for 30 seconds and reports only timing statistics (count, rate, gaps, regularity); key codes are never read. People type with roughly 80-250 ms between keys and a lot of variation; `keystroke_injection` (+60) fires for 15+ keys at 25+ keys/s, or a median gap under 30 ms with almost no variation. Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
+When a new device presents a keyboard, the agent records **when** its keys go down for 30 seconds and reports only timing statistics (count, rate, gaps, regularity); key codes are never read. People type with roughly 80-250 ms between keys and a lot of variation; `keystroke_injection` (critical, risk 85.5) fires for 15+ keys at 25+ keys/s, or a median gap under 30 ms with almost no variation. Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
 
 ## Data exfiltration watch
 
-While a storage device is attached, the agent samples the OS's per-disk I/O counters (`/sys/block/*/stat`, WMI disk counters) and sends the bytes written and read with the disconnect; no file names or contents are read. `large_transfer` (T1052.001 Exfiltration over USB) fires for a copy of `EXFIL_THRESHOLD_MB` (default 500) or 10x the device's usual, scoring higher outside working hours.
+While a storage device is attached, the agent samples the OS's per-disk I/O counters (`/sys/block/*/stat`, WMI disk counters) and sends the bytes written and read with the disconnect; no file names or contents are read. `large_transfer` (T1052.001 Exfiltration over USB) (high, risk 48) fires for a copy of `EXFIL_THRESHOLD_MB` (default 500) or 10x the device's usual; `large_transfer_off_hours` (+16) adds to it outside working hours.
 
 ## Model health
 

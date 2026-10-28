@@ -1,0 +1,33 @@
+title: New USB Unit Whose Descriptor Matches No Known Unit of Its Model
+id: 1582dbe2-5c4b-490c-b5d4-1fcc2108e863
+name: descriptor_model_mismatch
+status: test
+description: |
+  A new unit claims a VID/PID whose other units are known, but its descriptor fingerprint matches
+  none of them: a clone of the model built on different hardware.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+  - https://attack.mitre.org/techniques/T1036/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.defense-evasion
+  - attack.t1036
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.first_seen: true
+    device.fingerprint_known_for_model: false
+  condition: selection
+falsepositives:
+  - A hardware revision of the same model
+level: high
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 80
+  impact: 85
+  rationale: >-
+    Likelihood High (a unit structurally unlike every known unit of its model is highly likely to be a clone). Impact High (H-3: a clone passes identity-based controls).

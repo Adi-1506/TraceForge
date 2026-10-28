@@ -253,7 +253,7 @@ def test_machine_speed_typing_is_flagged_and_joins_the_device_incident(client):
     r = client.post("/events/ingest", json=typing_event(injected_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-02T03:00:31Z"))
     assert r.status_code == 200
     out = r.json()
-    assert out["risk_level"] in ("high", "critical") and out["incident_id"] is not None
+    assert out["risk_level"] in ("high", "very_high") and out["incident_id"] is not None
     finding = next(a for a in client.get("/anomalies", params={"device_id": 1}).json() if a["name"] == "keystroke_injection")
     assert "400 keys" in finding["explanation"] and [t["id"] for t in finding["mitre"]] == ["T1200", "T1059"]
     story = client.get(f"/incidents/{out['incident_id']}/story").json()
@@ -265,7 +265,7 @@ def test_machine_speed_typing_is_flagged_and_joins_the_device_incident(client):
 def test_a_person_typing_on_a_new_keyboard_is_not_flagged(client):
     post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID)
     r = client.post("/events/ingest", json=typing_event(human_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-01T10:00:31Z")).json()
-    assert r["risk_level"] == "low" and r["incident_id"] is None
+    assert r["risk_level"] == "very_low" and r["incident_id"] is None
     assert "keystroke_injection" not in {a["name"] for a in client.get("/anomalies").json()}
 
 
@@ -299,11 +299,14 @@ def test_a_big_copy_at_night_is_flagged_as_usb_exfiltration(client):
     out = unplug(client, int(3.2 * GB), "2026-09-01T17:50:00Z")
     found = next(a for a in client.get("/anomalies").json() if a["name"] == "large_transfer")
     assert "3.2 GB was written to the device during 10 minutes attached" in found["explanation"]
-    assert "outside working hours (23:00 local)" in found["explanation"] and found["weight"] == 50
+    assert found["weight"] == 80  # NIST: likelihood Moderate x impact Very High = High (Table I-2)
+    late = next(a for a in client.get("/anomalies").json() if a["name"] == "large_transfer_off_hours")
+    assert "outside working hours (23:00 local)" in late["explanation"] and late["weight"] == 10
     assert [t["id"] for t in found["mitre"]] == ["T1052.001"] and found["mitre"][0]["url"].endswith("/T1052/001/")
-    assert out["risk_score"] > 40 and out["incident_id"] is not None
+    assert out["risk_score"] >= 80 and out["incident_id"] is not None
     story = client.get(f"/incidents/{out['incident_id']}/story").json()
     assert story["headline"].startswith("Possible data exfiltration to USB storage")
+    assert any("outside working hours (23:00 local)" in p for p in story["paragraphs"])
     timeline = client.get("/devices/1/timeline").json()
     assert timeline[-1]["transfer"]["bytes_written"] == int(3.2 * GB)
 
@@ -315,13 +318,14 @@ def test_ten_times_the_devices_usual_copy_is_flagged_even_below_the_size_limit(c
     post(client, ts="2026-09-06T05:00:00Z")
     unplug(client, 300 * 1024**2, "2026-09-06T05:30:00Z")
     found = [a for a in client.get("/anomalies").json() if a["name"] == "large_transfer"]
-    assert len(found) == 1 and "its usual is 20.0 MB" in found[0]["explanation"] and found[0]["weight"] == 35
+    assert len(found) == 1 and "its usual is 20.0 MB" in found[0]["explanation"] and found[0]["weight"] == 80
+    assert "large_transfer_off_hours" not in {a["name"] for a in client.get("/anomalies").json()}  # in working hours
 
 
 def test_an_ordinary_copy_is_not_flagged(client):
     post(client)
     out = unplug(client, 80 * 1024**2, "2026-09-01T10:30:00Z")
-    assert out["risk_level"] == "medium" and "large_transfer" not in {a["name"] for a in client.get("/anomalies").json()}
+    assert out["risk_level"] == "moderate" and "large_transfer" not in {a["name"] for a in client.get("/anomalies").json()}
 
 
 def test_transfer_meter_reports_only_byte_counts(monkeypatch):

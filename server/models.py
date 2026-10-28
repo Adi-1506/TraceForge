@@ -90,7 +90,7 @@ class RiskScore(Base):
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), unique=True, index=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
     score: Mapped[float] = mapped_column(Float)
-    level: Mapped[str] = mapped_column(String)  # low | medium | high | critical
+    level: Mapped[str] = mapped_column(String)  # NIST SP 800-30: very_low | low | moderate | high | very_high
     reasoning: Mapped[list] = mapped_column(JSON)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

@@ -1,0 +1,40 @@
+title: Machine-Speed Typing From a Newly Connected Keyboard
+id: daac3ccf-0c33-456b-b01d-ebada3769f9a
+name: keystroke_injection
+status: test
+description: |
+  A newly connected keyboard types faster and more regularly than any person: 15 or more keys at
+  25+ keys per second, or with a median gap under 30 ms and almost no variation (gap coefficient
+  of variation under 0.35). People type with roughly 80-250 ms between keys. Only key timing is
+  recorded, never which keys.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+  - https://attack.mitre.org/techniques/T1059/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+  - attack.execution
+  - attack.t1059
+logsource:
+  product: traceforge
+  category: usb_typing
+detection:
+  volume:
+    typing.keys|gte: 15
+    typing.median_gap_ms|exists: true
+  fast:
+    typing.rate_per_s|gte: 25
+  regular:
+    typing.median_gap_ms|lt: 30
+    typing.gap_cv|lt: 0.35
+  condition: volume and (fast or regular)
+falsepositives:
+  - Barcode scanners and hardware password managers, which also type at machine speed
+level: critical
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 96
+  impact: 96
+  rationale: >-
+    Likelihood Very High (G-4: machine-speed typing is almost certain to be an injection attack). Impact Very High (H-3: arbitrary commands, run in seconds, on every machine it reaches).

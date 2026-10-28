@@ -1,12 +1,31 @@
-"""Rule-based USB identity checks. Each rule returns a Finding with a weight
-that feeds the risk score and a human-readable explanation."""
+"""Rule-based USB checks, as standard Sigma rules (server/detection/sigma_rules, run by sigma.py).
+
+Each event is first described as a flat document of fields. Facts that need history ("this
+identity was recorded as a flash drive", "other units of this model use a different serial
+format") are worked out here and stored as fields, the way a SIEM enriches events before its
+rules run. The Sigma rules then decide what is suspicious, and each match becomes a Finding whose
+weight is the rule's risk score (impact x confidence / 100) and whose explanation is the evidence
+recorded for it here.
+
+Fields:
+  device.vid_pid, device.serial, device.declared_type, device.recorded_type, device.trust_status,
+  device.first_seen, device.presents_keyboard, device.serial_on_other_model,
+  device.serial_fits_model, device.descriptor_changed, device.descriptor_changed_fields,
+  device.fingerprint, device.fingerprint_known_for_model, device.first_time_on_machine,
+  machine.hostname, machine.same_model_other_serial_24h,
+  typing.keys, typing.rate_per_s, typing.median_gap_ms, typing.gap_cv, typing.first_key_after_s,
+  transfer.bytes_written, transfer.bytes_read, transfer.over_threshold,
+  transfer.unusual_for_device, event.local_hour
+A field is None when it does not apply (for example serial_fits_model when no other unit of the
+model is known), so no rule matches on it.
+"""
 
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from server.detection import signatures
+from server.detection import signatures, sigma
 from server.models import Device, Event, Machine
 from server.config import settings
 from server.timeutil import as_utc, to_local
@@ -20,9 +39,28 @@ DESCRIPTOR_FIELDS = ("fingerprint", "pnp_class", "service", "interface_classes",
 class Finding:
     source: str
     name: str
-    weight: float
+    weight: float  # risk score: impact x confidence / 100 (Splunk Risk-Based Alerting)
     explanation: str
     detail: dict = field(default_factory=dict)
+
+
+@dataclass
+class Observations:
+    """One event as Sigma rules see it, plus the evidence behind each rule that can match it."""
+
+    fields: dict = field(default_factory=dict)
+    evidence: dict = field(default_factory=dict)  # rule name -> (explanation, detail)
+
+    def note(self, rule: str, explanation: str, detail: dict | None = None) -> None:
+        self.evidence[rule] = (explanation, detail or {})
+
+
+def findings_for(event_type: str, obs: Observations) -> list[Finding]:
+    found = []
+    for rule in sigma.evaluate(event_type, obs.fields):
+        explanation, detail = obs.evidence.get(rule.name, (rule.description, {}))
+        found.append(Finding("rule", rule.name, rule.risk, explanation, detail))
+    return found
 
 
 def serial_shape(serial: str | None) -> tuple:
@@ -40,94 +78,87 @@ def serial_shape(serial: str | None) -> tuple:
     return (len(serial), classes)
 
 
-def check_unknown_device(device: Device, is_new_device: bool, **_) -> list[Finding]:
-    if not is_new_device:
-        return []
-    return [
-        Finding(
-            "rule",
-            "unknown_device",
-            25,
-            f"Device {device.vendor_id}:{device.product_id} has never been seen before.",
-        )
-    ]
-
-
-def check_device_type_mismatch(device: Device, payload, **_) -> list[Finding]:
-    if payload.device_type and device.device_type and payload.device_type != device.device_type:
-        return [
-            Finding(
-                "rule",
-                "device_type_mismatch",
-                40,
-                f"Identity {device.vendor_id}:{device.product_id}/{device.serial_number} was recorded as "
-                f"'{device.device_type}' but now declares itself as '{payload.device_type}'.",
-                {"recorded": device.device_type, "declared": payload.device_type},
-            )
-        ]
-    return []
-
-
-def check_serial_reuse(db: Session, device: Device, **_) -> list[Finding]:
-    """Same serial number already belongs to a device with a different VID/PID."""
-    if not device.serial_number:
-        return []
-    others = (
+def _siblings(db: Session, device: Device) -> list[Device]:
+    """Other units of the same VID/PID."""
+    return (
         db.query(Device)
-        .filter(
-            Device.serial_number == device.serial_number,
-            Device.id != device.id,
-            (Device.vendor_id != device.vendor_id) | (Device.product_id != device.product_id),
-        )
+        .filter(Device.vendor_id == device.vendor_id, Device.product_id == device.product_id, Device.id != device.id)
         .all()
     )
-    if not others:
-        return []
-    o = others[0]
-    return [
-        Finding(
-            "rule",
+
+
+# --- connect --------------------------------------------------------------------------------------
+
+
+def observe_identity(obs: Observations, device: Device, machine: Machine, payload, is_new_device: bool) -> None:
+    obs.fields.update(
+        {
+            "device.vid_pid": f"{device.vendor_id}:{device.product_id}".upper(),
+            "device.serial": device.serial_number or None,
+            "device.declared_type": payload.device_type or None,
+            "device.recorded_type": device.device_type or None,
+            "device.trust_status": device.trust_status or "auto",
+            "device.first_seen": is_new_device,
+            "device.presents_keyboard": signatures.presents_keyboard(payload.device_type, payload.descriptor),
+            "machine.hostname": machine.hostname,
+        }
+    )
+    obs.note("unknown_device", f"Device {device.vendor_id}:{device.product_id} has never been seen before.")
+    obs.note(
+        "device_type_mismatch",
+        f"Identity {device.vendor_id}:{device.product_id}/{device.serial_number} was recorded as "
+        f"'{device.device_type}' but now declares itself as '{payload.device_type}'.",
+        {"recorded": device.device_type, "declared": payload.device_type},
+    )
+    board = signatures.match(device.vendor_id, device.product_id) or "programmable board"
+    obs.note(
+        "programmable_hid_board",
+        f"{device.vendor_id}:{device.product_id} is a {board}, a programmable board often used for "
+        f"keystroke injection, and it presents a keyboard interface.",
+        {"board": board},
+    )
+    note = f" ({device.trust_note})" if device.trust_note else ""
+    obs.note("blocklisted_device", f"This device was blocklisted by an investigator{note}.")
+
+
+def observe_serial(obs: Observations, db: Session, device: Device, siblings: list[Device]) -> None:
+    others = []
+    if device.serial_number:
+        # Same serial number already belongs to a device with a different VID/PID.
+        others = (
+            db.query(Device)
+            .filter(
+                Device.serial_number == device.serial_number,
+                Device.id != device.id,
+                (Device.vendor_id != device.vendor_id) | (Device.product_id != device.product_id),
+            )
+            .all()
+        )
+    obs.fields["device.serial_on_other_model"] = bool(others)
+    if others:
+        o = others[0]
+        obs.note(
             "serial_reuse_across_models",
-            40,
             f"Serial {device.serial_number} is already registered to {o.vendor_id}:{o.product_id} "
             f"('{o.device_type}'); this device claims {device.vendor_id}:{device.product_id}.",
             {"other_device_id": o.id},
         )
-    ]
 
-
-def check_serial_format(db: Session, device: Device, is_new_device: bool, **_) -> list[Finding]:
-    """Another unit of the same VID/PID exists but this serial looks structurally different."""
-    if not is_new_device:
-        return []
-    siblings = (
-        db.query(Device)
-        .filter(
-            Device.vendor_id == device.vendor_id,
-            Device.product_id == device.product_id,
-            Device.id != device.id,
-        )
-        .all()
-    )
+    # Another unit of the same VID/PID exists: does this serial look structurally like theirs?
     if not siblings:
-        return []
+        obs.fields["device.serial_fits_model"] = None
+        return
     known_shapes = {serial_shape(s.serial_number) for s in siblings}
-    if serial_shape(device.serial_number) in known_shapes:
-        return []
-    name = "missing_serial" if not device.serial_number else "serial_format_mismatch"
-    return [
-        Finding(
-            "rule",
-            name,
-            30,
-            f"Other {device.vendor_id}:{device.product_id} units use a different serial format "
-            f"than '{device.serial_number or '(none)'}'.",
-            {"known_shapes": [list(s) for s in known_shapes]},
-        )
-    ]
+    obs.fields["device.serial_fits_model"] = serial_shape(device.serial_number) in known_shapes
+    text = (
+        f"Other {device.vendor_id}:{device.product_id} units use a different serial format "
+        f"than '{device.serial_number or '(none)'}'."
+    )
+    for rule in ("missing_serial", "serial_format_mismatch"):
+        obs.note(rule, text, {"known_shapes": [list(s) for s in known_shapes]})
 
 
-def check_descriptor_mismatch(device: Device, payload, **_) -> list[Finding]:
+def observe_descriptor(obs: Observations, device: Device, payload, siblings: list[Device]) -> None:
     recorded = device.descriptor_json or {}
     current = payload.descriptor or {}
     # Missing/empty values mean "not captured yet" (e.g. driver not bound), not "changed".
@@ -138,54 +169,43 @@ def check_descriptor_mismatch(device: Device, payload, **_) -> list[Finding]:
         and current.get(f) not in (None, [], "")
         and recorded[f] != current[f]
     }
-    if not diffs:
-        return []
-    return [
-        Finding(
-            "rule",
+    obs.fields["device.descriptor_changed"] = bool(diffs)
+    obs.fields["device.descriptor_changed_fields"] = sorted(diffs)
+    if diffs:
+        obs.note(
             "descriptor_mismatch",
-            35,
-            "USB descriptor structure differs from the recorded profile for this identity ("
-            + ", ".join(sorted(diffs))
-            + ").",
+            "USB descriptor structure differs from the recorded profile for this identity (" + ", ".join(sorted(diffs)) + ").",
             diffs,
         )
-    ]
 
-
-def check_descriptor_model_mismatch(db: Session, device: Device, payload, is_new_device: bool, **_) -> list[Finding]:
-    """A new unit whose descriptor structure matches no known unit of the model it claims to be."""
-    current = (payload.descriptor or {}).get("fingerprint")
-    if not is_new_device or not current:
-        return []
-    siblings = (
-        db.query(Device)
-        .filter(Device.vendor_id == device.vendor_id, Device.product_id == device.product_id, Device.id != device.id)
-        .all()
-    )
+    # Does this unit's structure match any known unit of the model it claims to be?
+    fingerprint = current.get("fingerprint")
     known = {(s.descriptor_json or {}).get("fingerprint") for s in siblings} - {None}
-    if not known or current in known:
-        return []
-    return [
-        Finding(
-            "rule",
+    obs.fields["device.fingerprint"] = fingerprint
+    obs.fields["device.fingerprint_known_for_model"] = fingerprint in known if fingerprint and known else None
+    if fingerprint and known and fingerprint not in known:
+        obs.note(
             "descriptor_model_mismatch",
-            35,
             f"Descriptor structure does not match any known {device.vendor_id}:{device.product_id} unit "
-            f"(fingerprint {current}, expected one of {', '.join(sorted(known))}).",
-            {"fingerprint": current, "known_fingerprints": sorted(known)},
+            f"(fingerprint {fingerprint}, expected one of {', '.join(sorted(known))}).",
+            {"fingerprint": fingerprint, "known_fingerprints": sorted(known)},
         )
-    ]
 
 
 LOOKALIKE_WINDOW = timedelta(hours=24)
 
 
-def check_same_model_new_serial(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
-    """A new unit of a model that was on this same machine in the last 24 hours, under a different serial:
-    the pattern of a known drive being swapped for a lookalike carrying its VID/PID."""
-    if not is_new_device:
-        return []
+def observe_machine(obs: Observations, db: Session, device: Device, machine: Machine, event: Event) -> None:
+    seen_here = (
+        db.query(Event.id)
+        .filter(Event.device_id == device.id, Event.machine_id == machine.id, Event.id != event.id)
+        .first()
+    )
+    obs.fields["device.first_time_on_machine"] = seen_here is None
+    obs.note("new_source_machine", f"Device has never connected to {machine.hostname} before.")
+
+    # A unit of this model on this same machine in the last 24 hours, under a different serial:
+    # the pattern of a known drive being swapped for a lookalike carrying its VID/PID.
     since = as_utc(event.timestamp) - LOOKALIKE_WINDOW
     sibling = (
         db.query(Device)
@@ -200,96 +220,53 @@ def check_same_model_new_serial(db: Session, device: Device, machine: Machine, e
         )
         .first()
     )
-    if sibling is None:
-        return []
-    return [
-        Finding(
-            "rule",
+    obs.fields["machine.same_model_other_serial_24h"] = sibling is not None
+    if sibling is not None:
+        obs.note(
             "same_model_new_serial",
-            10,
             f"{device.vendor_id}:{device.product_id} with serial '{sibling.serial_number or '(none)'}' was on "
             f"{machine.hostname} in the last 24 hours; this unit claims the same model with serial "
             f"'{device.serial_number or '(none)'}'.",
             {"other_device_id": sibling.id},
         )
-    ]
 
 
-def check_programmable_hid_board(device: Device, payload, **_) -> list[Finding]:
-    board = signatures.match(device.vendor_id, device.product_id)
-    if board is None or not signatures.presents_keyboard(payload.device_type, payload.descriptor):
-        return []
-    return [
-        Finding(
-            "rule",
-            "programmable_hid_board",
-            40,
-            f"{device.vendor_id}:{device.product_id} is a {board}, a programmable board often used for "
-            f"keystroke injection, and it presents a keyboard interface.",
-            {"board": board},
-        )
-    ]
+def run_rules(db: Session, device: Device, machine: Machine, event: Event, payload, is_new_device: bool) -> list[Finding]:
+    obs = Observations()
+    siblings = _siblings(db, device)
+    observe_identity(obs, device, machine, payload, is_new_device)
+    observe_serial(obs, db, device, siblings)
+    observe_descriptor(obs, device, payload, siblings)
+    observe_machine(obs, db, device, machine, event)
+    return findings_for("connect", obs)
 
 
-def check_blocklisted(device: Device, **_) -> list[Finding]:
-    if device.trust_status != "blocklisted":
-        return []
-    note = f" ({device.trust_note})" if device.trust_note else ""
-    return [Finding("rule", "blocklisted_device", 60, f"This device was blocklisted by an investigator{note}.")]
+# --- typing ---------------------------------------------------------------------------------------
 
-
-def check_new_machine(db: Session, device: Device, machine: Machine, event: Event, is_new_device: bool, **_) -> list[Finding]:
-    if is_new_device:
-        return []
-    seen_here = (
-        db.query(Event.id)
-        .filter(Event.device_id == device.id, Event.machine_id == machine.id, Event.id != event.id)
-        .first()
-    )
-    if seen_here:
-        return []
-    return [
-        Finding(
-            "rule",
-            "new_source_machine",
-            15,
-            f"Device has never connected to {machine.hostname} before.",
-        )
-    ]
-
-
-# People type with roughly 80-250 ms between keys and a lot of variation; injection tools type
-# hundreds of keys a second with near-identical gaps.
-INJECTION_MIN_KEYS = 15
-INJECTION_RATE = 25.0  # keys per second
-INJECTION_MEDIAN_MS = 30.0
-INJECTION_MAX_CV = 0.35  # gap variation (stdev / mean); machine typing is very regular
+TYPING_FIELDS = ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_after_s", "burst_fraction")
 
 
 def check_keystroke_injection(typing: dict | None) -> list[Finding]:
     """Runs on 'typing' reports, not connects: superhuman, machine-regular typing from a new keyboard."""
-    if not typing or typing.get("keys", 0) < INJECTION_MIN_KEYS or "median_gap_ms" not in typing:
-        return []
-    rate, median, cv = typing.get("rate_per_s", 0.0), typing["median_gap_ms"], typing.get("gap_cv", 1.0)
-    if rate < INJECTION_RATE and not (median < INJECTION_MEDIAN_MS and cv < INJECTION_MAX_CV):
-        return []
-    started = typing.get("first_key_after_s")
-    start = f", starting {started:g} s after it was plugged in" if started is not None else ""
-    return [
-        Finding(
-            "rule",
+    typing = typing or {}
+    obs = Observations({f"typing.{k}": typing.get(k) for k in TYPING_FIELDS})
+    if "median_gap_ms" in typing:
+        rate, median, cv = typing.get("rate_per_s", 0.0), typing["median_gap_ms"], typing.get("gap_cv", 1.0)
+        started = typing.get("first_key_after_s")
+        start = f", starting {started:g} s after it was plugged in" if started is not None else ""
+        obs.note(
             "keystroke_injection",
-            60,
-            f"Typed {typing['keys']} keys at {rate:g} keys/s with a median gap of {median:g} ms and almost no variation "
+            f"Typed {typing.get('keys')} keys at {rate:g} keys/s with a median gap of {median:g} ms and almost no variation "
             f"(gap CV {cv:g}){start}. People type with roughly 80-250 ms between keys: this is a machine typing.",
-            {k: typing.get(k) for k in ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_after_s", "burst_fraction")},
+            {k: typing.get(k) for k in TYPING_FIELDS},
         )
-    ]
+    return findings_for("typing", obs)
 
+
+# --- disconnect -----------------------------------------------------------------------------------
 
 MB = 1024 * 1024
 UNUSUAL_FACTOR, UNUSUAL_MIN_MB = 10, 50  # 10x this device's usual transfer, if at least 50 MB
-NIGHT = (7, 21)  # local hours outside this range count as off-hours
 
 
 def _size(n: float) -> str:
@@ -301,60 +278,30 @@ def _size(n: float) -> str:
 
 def check_large_transfer(db: Session, device: Device, event: Event, transfer: dict | None) -> list[Finding]:
     """Runs on disconnects: a large copy to the device, by size or against its own history (T1052.001)."""
-    written = (transfer or {}).get("bytes_written") or 0
+    transfer = transfer or {}
+    written = transfer.get("bytes_written") or 0
+    hour = to_local(event.timestamp).hour
+    obs = Observations({"transfer.bytes_written": written, "transfer.bytes_read": transfer.get("bytes_read"), "event.local_hour": hour})
     if not written:
-        return []
+        return findings_for("disconnect", obs)
+
     history = [
         ((p or {}).get("transfer") or {}).get("bytes_written")  # older disconnects carry transfer=None
         for (p,) in db.query(Event.raw_payload).filter(Event.device_id == device.id, Event.event_type == "disconnect", Event.id != event.id)
     ]
     history = sorted(h for h in history if h)
     usual = history[len(history) // 2] if len(history) >= 3 else None
-    big = written >= settings.exfil_threshold_mb * MB
-    unusual = usual is not None and written >= UNUSUAL_FACTOR * usual and written >= UNUSUAL_MIN_MB * MB
-    if not (big or unusual):
-        return []
-    hour = to_local(event.timestamp).hour
-    night = not NIGHT[0] <= hour < NIGHT[1]
+    obs.fields["transfer.over_threshold"] = written >= settings.exfil_threshold_mb * MB
+    obs.fields["transfer.unusual_for_device"] = usual is not None and written >= UNUSUAL_FACTOR * usual and written >= UNUSUAL_MIN_MB * MB
+
     minutes = (transfer.get("duration_s") or 0) / 60
     why = f"{_size(written)} was written to the device" + (f" during {minutes:.0f} minutes attached" if minutes >= 1 else "")
     if usual:
         why += f"; its usual is {_size(usual)}"
-    if night:
-        why += f", outside working hours ({hour:02d}:00 local)"
-    return [
-        Finding(
-            "rule",
-            "large_transfer",
-            50 if night else 35,
-            why + ". A large copy to removable storage is how data leaves on a USB stick.",
-            {"bytes_written": written, "bytes_read": transfer.get("bytes_read"), "usual_bytes": usual, "night": night},
-        )
-    ]
-
-
-RULES = [
-    check_unknown_device,
-    check_device_type_mismatch,
-    check_serial_reuse,
-    check_serial_format,
-    check_descriptor_mismatch,
-    check_descriptor_model_mismatch,
-    check_same_model_new_serial,
-    check_programmable_hid_board,
-    check_blocklisted,
-    check_new_machine,
-]
-
-# An allowlisted (trusted) device may roam between machines; identity, descriptor and behaviour
-# checks still apply, so a clone of a trusted device is still caught.
-SILENCED_WHEN_TRUSTED = {"new_source_machine"}
-
-
-def run_rules(db: Session, **ctx) -> list[Finding]:
-    findings: list[Finding] = []
-    for rule in RULES:
-        findings.extend(rule(db=db, **ctx))
-    if ctx["device"].trust_status == "trusted":
-        findings = [f for f in findings if f.name not in SILENCED_WHEN_TRUSTED]
-    return findings
+    obs.note(
+        "large_transfer",
+        why + ". A large copy to removable storage is how data leaves on a USB stick.",
+        {"bytes_written": written, "bytes_read": transfer.get("bytes_read"), "usual_bytes": usual},
+    )
+    obs.note("large_transfer_off_hours", f"The copy was made outside working hours ({hour:02d}:00 local).", {"local_hour": hour})
+    return findings_for("disconnect", obs)

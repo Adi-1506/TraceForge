@@ -1,0 +1,27 @@
+title: Blocklisted USB Device Connected
+id: 9e734bf9-0cce-458e-a79f-5a498123a70b
+name: blocklisted_device
+status: stable
+description: A device an investigator blocklisted has been connected again.
+references:
+  - https://attack.mitre.org/techniques/T1200/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.trust_status: blocklisted
+  condition: selection
+falsepositives:
+  - A device blocklisted by mistake
+level: critical
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 90
+  impact: 96
+  rationale: >-
+    Likelihood High (an investigator already judged this device harmful). Impact Very High (H-3: a device known to be malicious, which may reach several machines).
