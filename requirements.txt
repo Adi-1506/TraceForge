@@ -6,6 +6,7 @@ pydantic==2.13.5
 pydantic-settings==2.15.0
 python-dotenv==1.2.3
 requests==2.34.2
+cryptography==50.0.1  # RSA-PSS signatures on exports and attestations
 WMI==1.5.1; sys_platform == "win32"
 pywin32==312; sys_platform == "win32"
 pyudev==0.24.5; sys_platform == "linux"

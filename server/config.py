@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     retrain_interval_hours: float = 0
     # A copy to a USB storage device this large is flagged (large_transfer), as is 10x its usual.
     exfil_threshold_mb: float = 500
+    # Digital signatures on exports and attestations (server/signing.py). Empty path = server/model_artifacts/signing_key.pem.
+    signing_key_path: str | None = None
+    # When set, the private key file is stored encrypted with this passphrase.
+    signing_key_passphrase: str | None = None
     # Failed logins allowed per username (and per client address) in the window before /auth/login returns 429.
     login_max_failures: int = 5
     login_window_minutes: float = 15

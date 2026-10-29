@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from server import integrity, models  # noqa: F401  (models registers tables on Base.metadata)
+from server import audit, integrity, models, signing  # noqa: F401  (models registers tables on Base.metadata)
 from server.config import settings
 from server.database import Base, SessionLocal, engine, upgrade_schema
-from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, system
+from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, signing as signing_router, system
 from server.auth import current_user
 from server.scheduler import retrain_loop
 from server.security import agent_keys_configured, api_key_configured
@@ -44,6 +44,11 @@ async def lifespan(_: FastAPI):
     upgrade_schema()
     with SessionLocal() as db:
         integrity.backfill(db)  # events stored before the evidence chain existed
+        signing.private_key()  # load the signing key now, or create it, so a bad passphrase fails at startup
+        if signing.was_created_now():
+            audit.record(db, "system", "signing.key_created", key_id=signing.key_id(), algorithm=signing.ALGORITHM)
+            db.commit()
+        log.info("Signing key %s (%s)", signing.key_id(), signing.ALGORITHM)
     task = asyncio.create_task(retrain_loop()) if settings.retrain_interval_hours > 0 else None
     yield
     if task is not None:
@@ -59,10 +64,10 @@ app.add_middleware(
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_methods=["GET", "POST", "PUT", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
-    expose_headers=["X-Content-SHA256"],
+    expose_headers=["X-Content-SHA256", "X-Signature", "X-Signature-Algorithm", "X-Signature-Key-Id"],
 )
 
-for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, audit_log, graph, forensics):
+for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, audit_log, graph, forensics, signing_router):
     app.include_router(r.router)
 
 

@@ -7,6 +7,9 @@ os.environ["DATABASE_URL"] = f"sqlite:///{(_tmp / 'test.db').as_posix()}"
 # Environment variables win over .env, so a developer's local API key does not leak into the tests.
 os.environ["API_KEY"] = ""
 os.environ["AGENT_KEYS"] = ""
+# Signing key in the temp dir, never in the repo's model_artifacts.
+os.environ["SIGNING_KEY_PATH"] = str(_tmp / "signing_key.pem")
+os.environ["SIGNING_KEY_PASSPHRASE"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

@@ -13,7 +13,8 @@ agent (Windows WMI events / Linux udev, libusb descriptors)
                                           |-- risk.py         weighted score with recorded reasoning
                                           |-- trust.py        device trust from its whole history
                                           |-- correlate.py    incidents per machine, cases across machines
-                                          '-- integrity.py    SHA-256 hash chain over every event
+                                          |-- integrity.py    SHA-256 hash chain over every event
+                                          '-- signing.py      RSA-PSS signatures on exports and attestations
 React dashboard <-- REST JSON + Bearer login (devices, trust, timelines, incidents, cases, audit log)
 ```
 
@@ -144,6 +145,32 @@ Nothing is blocked on the machine: TraceForge is an investigation platform, not 
 
 Every event stores `record_hash = SHA-256(prev_hash + its canonical evidence)`, so all events form one hash chain (`server/integrity.py`). Editing, deleting or reordering any stored event breaks every hash after it. `GET /integrity/verify`, also shown in the dashboard header, says whether the chain is intact and names the first altered event. Databases created before this feature are chained at startup. Forensic exports carry each event's hash and the chain head, and send `X-Content-SHA256` for the exact file, which the dashboard shows after a download.
 
+## Signed reports and attestations
+
+A SHA-256 hash proves a file is unchanged, but anyone who edits a report can simply recompute its
+hash. Every forensic export is therefore also **digitally signed** by the server (`server/signing.py`):
+RSA-2048 with RSA-PSS over SHA-256, the signature scheme with a security proof. The signature covers the
+exact bytes downloaded, so it gives integrity, **authenticity** (this TraceForge server produced it) and
+**non-repudiation**.
+
+- The key pair is created on first start in `server/model_artifacts/signing_key.pem` (owner-only file;
+  the Docker model volume keeps it across restarts) and logged in the audit log with its key id.
+  Set `SIGNING_KEY_PASSPHRASE` to store the private key encrypted (PKCS#8 PBES2: PBKDF2-HMAC-SHA256
+  derives an AES-256 key, AES-256-CBC encrypts the key file).
+- `GET /signing/public-key` publishes the public key without a login, because verifiers (a court,
+  another lab) usually have no account.
+- The dashboard **verifies each export's signature in the browser** (WebCrypto) as soon as it downloads,
+  shows "Signature valid" with the key id, and offers **Save .sig** and **Public key** to keep with the file.
+- `GET /integrity/attestation` returns a signed statement of the evidence chain (head hash, event count,
+  intact or not, time). Keeping one in the case file means even deleting the newest events, which the
+  hash chain alone cannot reveal, is caught later.
+- Anyone can check a report offline with only the `cryptography` package:
+
+```bash
+python tools/verify_signature.py report.json report.json.sig --public-key traceforge_public.pem
+python tools/verify_signature.py --attestation attestation.json --public-key traceforge_public.pem
+```
+
 ## Logins, roles and audit log
 
 Off by default (`AUTH_ENABLED=false`) for local development. When on:
@@ -218,6 +245,7 @@ While a storage device is attached, the agent samples (every `TRACEFORGE_SAMPLE_
 | `AUTH_ENABLED` | `false` | investigator logins and roles |
 | `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_MINUTES` | `5`, `15` | failed logins per username and per client address before `/auth/login` answers 429 |
 | `POSTGRES_PASSWORD` | `traceforge` | database password for docker-compose |
+| `SIGNING_KEY_PATH`, `SIGNING_KEY_PASSPHRASE` | `server/model_artifacts/signing_key.pem`, none | where the signing key lives; passphrase to store it encrypted |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | browser origins allowed to call the API |
 | `ML_ALGORITHM` | `iforest` | `iforest` or `ocsvm` |
 | `RETRAIN_INTERVAL_HOURS` | `0` | scheduled retraining |
@@ -294,6 +322,8 @@ on synthetic data and are not directly comparable.
 | GET | `/incidents`, `/incidents/{id}` | correlated incidents, with their cross-machine case |
 | PATCH | `/incidents/{id}` | set status (`open`, `investigating`, `resolved`) and/or note (investigator) |
 | GET | `/integrity/verify` | check the evidence hash chain |
+| GET | `/integrity/attestation` | signed statement of the chain head, for the case file |
+| GET | `/signing/public-key` | the server's RSA public key for verifying signatures (no login needed) |
 | GET | `/stats`, `/ml/status` | dashboard counters, model state |
 | POST | `/ml/train` | retrain the model on stored history (admin login or `X-API-Key`) |
 | GET, POST | `/auth/config`, `/auth/login`, `/auth/logout`, `/auth/me`, `/auth/users` | logins and user management |

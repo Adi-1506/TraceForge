@@ -41,6 +41,8 @@ services:
       RETRAIN_INTERVAL_HOURS: ${RETRAIN_INTERVAL_HOURS:-0}
       TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
       EXFIL_THRESHOLD_MB: ${EXFIL_THRESHOLD_MB:-500}
+      # The signing key is created in the traceforge_models volume on first start; set a passphrase to store it encrypted.
+      SIGNING_KEY_PASSPHRASE: ${SIGNING_KEY_PASSPHRASE:-}
     ports:
       - "8000:8000"
     volumes:
