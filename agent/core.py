@@ -1,6 +1,8 @@
 """Platform-independent agent logic: enumeration tracking, payload building, delivery."""
 
 import json
+import os
+import socket
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -8,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+
+from agent.spool import SpoolCipher
 
 
 @dataclass
@@ -111,7 +115,7 @@ class Sender:
     JSON-lines spool file and retried, so events survive server outages and agent restarts."""
 
     def __init__(self, server_url: str, api_key: str | None, spool_path: Path, session=None, timeout: float = 5,
-                 ca_bundle: str | None = None):
+                 ca_bundle: str | None = None, hostname: str | None = None):
         self.url = f"{server_url.rstrip('/')}/events/ingest"
         self.headers = {"X-API-Key": api_key} if api_key else {}
         self.spool_path = spool_path
@@ -122,13 +126,39 @@ class Sender:
         self.request_options = {"verify": ca_bundle} if ca_bundle else {}
         self.timeout = timeout
         self.queue: deque[dict] = deque()
+        # AES-256-GCM per line (agent/spool.py), keyed from the API key; plaintext only without a key.
+        self.cipher = SpoolCipher(api_key, hostname or socket.gethostname())
+        self.rejected = 0
         if spool_path.exists():
-            self.queue.extend(json.loads(line) for line in spool_path.read_text().splitlines() if line.strip())
+            self._load()
+
+    def _load(self) -> None:
+        bad = []
+        for line in self.spool_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                self.queue.append(self.cipher.open(line))
+            except ValueError as exc:
+                bad.append((line, str(exc)))
+        if bad:
+            # Keep them for investigation; never send them, never silently drop them.
+            rejected = self.spool_path.with_name(self.spool_path.name + ".rejected")
+            with rejected.open("a") as f:
+                f.writelines(line + "\n" for line, _ in bad)
+            self.rejected = len(bad)
+            print(f"WARNING: {len(bad)} spooled event(s) failed their integrity check ({bad[0][1]}); "
+                  f"moved to {rejected} and not sent. This means the spool was tampered with or the API key changed.")
+        self._persist()  # rewrite: drops rejected lines and seals any old plaintext lines
 
     def _persist(self) -> None:
         if self.queue:
             self.spool_path.parent.mkdir(parents=True, exist_ok=True)
-            self.spool_path.write_text("".join(json.dumps(p) + "\n" for p in self.queue))
+            tmp = self.spool_path.with_name(self.spool_path.name + ".tmp")
+            tmp.write_text("".join(self.cipher.seal(p) + "\n" for p in self.queue))
+            if os.name != "nt":
+                os.chmod(tmp, 0o600)  # owner-only, like the other secrets TraceForge writes
+            os.replace(tmp, self.spool_path)  # atomic: a crash mid-write never leaves a half-written spool
         else:
             self.spool_path.unlink(missing_ok=True)
 

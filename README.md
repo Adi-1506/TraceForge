@@ -60,6 +60,7 @@ set TRACEFORGE_API_KEY=<same as the server's API_KEY>
 - **Enumeration:** after a device appears the agent waits 1.5 s, recording which interfaces appear, in what order and how long enumeration took.
 - **Real descriptors:** it then reads the device and configuration descriptors through libusb (`pyusb` + `libusb-package`, no driver changes needed): USB version, device class, every interface (class/subclass/protocol) and every endpoint (direction, transfer type, packet size).
 - **Offline queue:** events carry the time the OS reported them. If the server is unreachable they are kept in `~/.traceforge/spool.jsonl` and retried every 10 s, in order, across restarts.
+- **Encrypted spool:** each queued event is sealed with AES-256-GCM under a key derived (HKDF-SHA256) from the agent's API key and hostname (`agent/spool.py`), written atomically and owner-only. Nobody with access to the monitored PC can read the queue, and a line that was edited fails GCM authentication: it is moved to `spool.jsonl.rejected` with a warning and never sent. Without an API key the spool stays plaintext (the agent says so).
 - On Linux, reading descriptors works as a normal user; seeing events needs no extra permissions.
 - On Linux, install the agent extras for the keystroke-timing watch: `pip install -r requirements-agent.txt` (adds `evdev`, which needs the kernel headers: `apt install linux-headers-$(uname -r)` or your distro's equivalent). Without it the agent still runs and skips that watch. Windows needs nothing extra.
 

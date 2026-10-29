@@ -77,9 +77,11 @@ def run() -> None:
     mode, existing = backends.start(events)
     attached = {e.key: e for e in existing}
     tracker = EnumerationTracker()
-    sender = Sender(SERVER_URL, API_KEY, SPOOL, ca_bundle=CA_BUNDLE)
+    sender = Sender(SERVER_URL, API_KEY, SPOOL, ca_bundle=CA_BUNDLE, hostname=HOSTNAME)
     print(f"TraceForge agent on {HOSTNAME} ({mode}), {len(attached)} USB device(s) attached, "
           f"{len(sender.queue)} spooled event(s). Ctrl+C to stop.")
+    if not sender.cipher.encrypting:
+        print("Note: no TRACEFORGE_API_KEY, so events spooled while the server is down are stored unencrypted.")
     if plaintext_risk(SERVER_URL):
         print("WARNING: sending events and the API key over plain HTTP to another machine; anyone on the network can read "
               "and replay them. Enable TLS on the server (python -m server.manage tls-init) and use https://.")
