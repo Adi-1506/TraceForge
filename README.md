@@ -146,6 +146,12 @@ Nothing is blocked on the machine: TraceForge is an investigation platform, not 
 
 Every event stores `record_hash = SHA-256(prev_hash + its canonical evidence)`, so all events form one hash chain (`server/integrity.py`). Editing, deleting or reordering any stored event breaks every hash after it. `GET /integrity/verify`, also shown in the dashboard header, says whether the chain is intact and names the first altered event. Databases created before this feature are chained at startup. Forensic exports carry each event's hash and the chain head, and send `X-Content-SHA256` for the exact file, which the dashboard shows after a download.
 
+## Security mechanisms
+
+Every security mechanism (hash chain, signatures, TLS, spool encryption, key derivation, access control),
+what it protects, where it lives, and which Information Security Lab topic it applies is listed in
+[docs/SECURITY.md](docs/SECURITY.md), along with what is deliberately not used and why.
+
 ## HTTPS (TLS)
 
 Agents send their key and every event to the server, and investigators send passwords and session
