@@ -11,3 +11,5 @@ frontend/dist/
 .claude/
 # Private keys (the signing key lives in server/model_artifacts/, already ignored)
 *.pem
+# TLS certificates and keys from tls-init
+certs/

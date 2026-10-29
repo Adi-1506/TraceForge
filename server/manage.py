@@ -3,6 +3,7 @@
     python -m server.manage create-user <username> --role admin      (prompts for the password)
     python -m server.manage hash-key                                  (prints API_KEY_HASH for a key)
     python -m server.manage agent-key LAB-PC-01                       (a key that may only report for that machine)
+    python -m server.manage tls-init --host 192.168.1.20              (local CA + HTTPS certificate)
     python -m server.manage import setupapi.dev.log --machine SEIZED-PC [--registry usb.reg] [--dry-run]
 """
 
@@ -67,6 +68,9 @@ def main() -> None:
     sub.add_parser("hash-key", help="generate (or hash) an agent API key for API_KEY_HASH")
     ak = sub.add_parser("agent-key", help="generate a key bound to one machine, for AGENT_KEYS")
     ak.add_argument("hostname")
+    ti = sub.add_parser("tls-init", help="create a local certificate authority and an HTTPS certificate for the server")
+    ti.add_argument("--host", action="append", default=[], help="extra hostname or IP agents use to reach the server (repeatable)")
+    ti.add_argument("--out", default="certs", help="directory for ca.crt, ca.key, server.crt, server.key (default: certs)")
     im = sub.add_parser("import", help="import USB evidence from a seized machine")
     im.add_argument("file", help="setupapi.dev.log, a .reg export of the USB Enum key, or a Linux kernel log")
     im.add_argument("--machine", help="the seized machine's hostname (Linux logs name it themselves)")
@@ -92,6 +96,20 @@ def main() -> None:
         print(f"Created {args.role} '{args.username}'.")
     elif args.command == "import":
         run_import(args)
+    elif args.command == "tls-init":
+        from pathlib import Path
+
+        from server import tls
+
+        hosts = list(dict.fromkeys(args.host + tls.default_hosts()))
+        out = tls.issue(Path(args.out), hosts)
+        print(("Created a new certificate authority: " if out.ca_created else "Reused the existing certificate authority: ") + str(out.ca_cert))
+        print(f"Server certificate for {', '.join(hosts)}, valid until {out.not_after:%Y-%m-%d}: {out.server_cert}")
+        print(f"\nServer (.env):   TLS_CERT_FILE={out.server_cert}\n                 TLS_KEY_FILE={out.server_key}")
+        print(f"Each agent:      TRACEFORGE_SERVER=https://<one of the names above>:8000")
+        print(f"                 TRACEFORGE_CA_BUNDLE=<copy of {out.ca_cert}>")
+        print(f"Browsers:        trust {out.ca_cert} (Windows: certutil -user -addstore Root {out.ca_cert})")
+        print("Keep ca.key private: whoever has it can issue certificates your agents will trust.")
     elif args.command == "agent-key":
         key = secrets.token_urlsafe(32)
         print(f"On {args.hostname}:   TRACEFORGE_API_KEY={key}")

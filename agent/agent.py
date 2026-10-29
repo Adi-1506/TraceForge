@@ -8,7 +8,8 @@ and retried.
 
     python agent/agent.py
 
-Environment: TRACEFORGE_SERVER (default http://localhost:8000),
+Environment: TRACEFORGE_SERVER (default http://localhost:8000; https://... when the server has TLS),
+TRACEFORGE_CA_BUNDLE (the TraceForge ca.crt, to trust the server's HTTPS certificate),
 TRACEFORGE_API_KEY (must match the server's API_KEY when one is set),
 TRACEFORGE_SPOOL (default ~/.traceforge/spool.jsonl).
 """
@@ -30,6 +31,7 @@ from agent.descriptors import device_type_for, read_descriptor  # noqa: E402
 
 SERVER_URL = os.environ.get("TRACEFORGE_SERVER", "http://localhost:8000")
 API_KEY = os.environ.get("TRACEFORGE_API_KEY") or None
+CA_BUNDLE = os.environ.get("TRACEFORGE_CA_BUNDLE") or None
 SPOOL = Path(os.environ.get("TRACEFORGE_SPOOL", Path.home() / ".traceforge" / "spool.jsonl"))
 RETRY_SECONDS = 10
 HOSTNAME = socket.gethostname()
@@ -55,6 +57,14 @@ def has_keyboard(dev, descriptor: dict | None) -> bool:
     return "input" in (dev.device_type or "").lower() or "keyboard" in (dev.device_type or "").lower()
 
 
+def plaintext_risk(server_url: str) -> bool:
+    """Plain HTTP to anything but this machine exposes the key and the events on the network."""
+    from urllib.parse import urlparse
+
+    url = urlparse(server_url)
+    return url.scheme == "http" and (url.hostname or "") not in ("localhost", "127.0.0.1", "::1")
+
+
 def report(results: list[dict], label: str) -> None:
     for r in results:
         flag = " [NEW DEVICE]" if r.get("is_new_device") else ""
@@ -67,9 +77,12 @@ def run() -> None:
     mode, existing = backends.start(events)
     attached = {e.key: e for e in existing}
     tracker = EnumerationTracker()
-    sender = Sender(SERVER_URL, API_KEY, SPOOL)
+    sender = Sender(SERVER_URL, API_KEY, SPOOL, ca_bundle=CA_BUNDLE)
     print(f"TraceForge agent on {HOSTNAME} ({mode}), {len(attached)} USB device(s) attached, "
           f"{len(sender.queue)} spooled event(s). Ctrl+C to stop.")
+    if plaintext_risk(SERVER_URL):
+        print("WARNING: sending events and the API key over plain HTTP to another machine; anyone on the network can read "
+              "and replay them. Enable TLS on the server (python -m server.manage tls-init) and use https://.")
     if WATCH_TYPING and (why := keystrokes.unavailable_reason()):
         print(f"WARNING: keystroke-injection (BadUSB) detection is OFF on this machine: {why}.")
     last_retry = time.monotonic()

@@ -1,11 +1,12 @@
 import asyncio
+from pathlib import Path
 import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from server import audit, integrity, models, signing  # noqa: F401  (models registers tables on Base.metadata)
+from server import audit, integrity, models, signing, tls  # noqa: F401  (models registers tables on Base.metadata)
 from server.config import settings
 from server.database import Base, SessionLocal, engine, upgrade_schema
 from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, signing as signing_router, system
@@ -31,9 +32,21 @@ def security_warnings() -> list[str]:
         out.append("API_KEY is a well-known placeholder; generate one with python -m server.manage hash-key.")
     if not agent_keys_configured():
         out.append("No AGENT_KEYS: every agent shares one key, so one compromised machine can report as any other.")
+    if not (settings.tls_cert_file and settings.tls_key_file) and not settings.tls_terminated_by_proxy:
+        out.append("Serving plain HTTP: API keys, passwords and evidence cross the network unencrypted. "
+                   "Run python -m server.manage tls-init and set TLS_CERT_FILE / TLS_KEY_FILE.")
     if "traceforge:traceforge@" in settings.database_url:
         out.append("The database still uses the default traceforge/traceforge credentials.")
     return out
+
+
+def tls_status() -> dict:
+    if settings.tls_cert_file and settings.tls_key_file:
+        try:
+            return {"enabled": True, **tls.describe(Path(settings.tls_cert_file))}
+        except (OSError, ValueError) as exc:
+            return {"enabled": True, "error": str(exc)}
+    return {"enabled": False, "terminated_by_proxy": settings.tls_terminated_by_proxy}
 
 
 @asynccontextmanager
@@ -83,5 +96,7 @@ def security_status():
         "auth_enabled": settings.auth_enabled,
         "agent_keys": agent_keys_configured(),
         "shared_key_allowed_for_ingest": not settings.require_agent_keys,
+        "tls": tls_status(),
+        "signing_key_id": signing.key_id(),
         "warnings": security_warnings(),
     }

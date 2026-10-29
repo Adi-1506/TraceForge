@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     retrain_interval_hours: float = 0
     # A copy to a USB storage device this large is flagged (large_transfer), as is 10x its usual.
     exfil_threshold_mb: float = 500
+    # HTTPS: the server certificate and key from `python -m server.manage tls-init` (served by server/run.py).
+    tls_cert_file: str | None = None
+    tls_key_file: str | None = None
+    # Set when a reverse proxy in front of the server terminates TLS instead (silences the plain-HTTP warning).
+    tls_terminated_by_proxy: bool = False
     # Digital signatures on exports and attestations (server/signing.py). Empty path = server/model_artifacts/signing_key.pem.
     signing_key_path: str | None = None
     # When set, the private key file is stored encrypted with this passphrase.

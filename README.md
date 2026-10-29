@@ -145,6 +145,33 @@ Nothing is blocked on the machine: TraceForge is an investigation platform, not 
 
 Every event stores `record_hash = SHA-256(prev_hash + its canonical evidence)`, so all events form one hash chain (`server/integrity.py`). Editing, deleting or reordering any stored event breaks every hash after it. `GET /integrity/verify`, also shown in the dashboard header, says whether the chain is intact and names the first altered event. Databases created before this feature are chained at startup. Forensic exports carry each event's hash and the chain head, and send `X-Content-SHA256` for the exact file, which the dashboard shows after a download.
 
+## HTTPS (TLS)
+
+Agents send their key and every event to the server, and investigators send passwords and session
+tokens. Over plain HTTP anyone on the lab network can read and replay all of it, so for anything beyond
+a demo on one machine, serve the API over HTTPS. A lab has no public domain, so TraceForge creates its
+own small certificate authority (`server/tls.py`): ECDSA P-256 keys, SHA-256 signatures, a CA limited to
+signing server certificates (`pathlen 0`), and a server certificate naming every hostname and IP agents use.
+Python's TLS stack only accepts TLS 1.2 and 1.3.
+
+```bash
+python -m server.manage tls-init --host 192.168.1.20 --host LAB-SERVER   # certs/ca.crt, server.crt, keys (owner-only)
+# .env: TLS_CERT_FILE=certs/server.crt  TLS_KEY_FILE=certs/server.key
+python -m server.run                                                       # HTTPS on :8000
+```
+
+With Docker: create the certificates as above (or inside the container, see the top of
+`docker-compose.tls.yml`), then `docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build`.
+
+- **Agents:** `TRACEFORGE_SERVER=https://LAB-SERVER:8000` and `TRACEFORGE_CA_BUNDLE=path/to/ca.crt`. The agent
+  trusts that CA for its own requests only, never falls back to an unverified connection (events stay spooled
+  and it says why), and warns at startup if it is sending to another machine over plain HTTP.
+- **Browsers:** trust `certs/ca.crt` (Windows: `certutil -user -addstore Root certs\ca.crt`).
+- Re-running `tls-init` issues a new server certificate from the same CA, so agents keep working. Keep `ca.key`
+  private: whoever has it can issue certificates your agents will trust.
+- Behind a reverse proxy that already does HTTPS, set `TLS_TERMINATED_BY_PROXY=true` instead.
+- The server warns at startup (and in `GET /system/security`) while it serves plain HTTP.
+
 ## Signed reports and attestations
 
 A SHA-256 hash proves a file is unchanged, but anyone who edits a report can simply recompute its
@@ -245,6 +272,9 @@ While a storage device is attached, the agent samples (every `TRACEFORGE_SAMPLE_
 | `AUTH_ENABLED` | `false` | investigator logins and roles |
 | `LOGIN_MAX_FAILURES`, `LOGIN_WINDOW_MINUTES` | `5`, `15` | failed logins per username and per client address before `/auth/login` answers 429 |
 | `POSTGRES_PASSWORD` | `traceforge` | database password for docker-compose |
+| `TLS_CERT_FILE`, `TLS_KEY_FILE` | none | serve HTTPS with these (from `tls-init`); `python -m server.run` and the Docker image use them |
+| `TLS_TERMINATED_BY_PROXY` | `false` | a reverse proxy handles HTTPS in front of the server |
+| `TRACEFORGE_CA_BUNDLE` (agent) | none | the TraceForge `ca.crt`, so the agent trusts the server's certificate |
 | `SIGNING_KEY_PATH`, `SIGNING_KEY_PASSPHRASE` | `server/model_artifacts/signing_key.pem`, none | where the signing key lives; passphrase to store it encrypted |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | browser origins allowed to call the API |
 | `ML_ALGORITHM` | `iforest` | `iforest` or `ocsvm` |
@@ -339,7 +369,8 @@ Run the tests with `python -m pytest`.
 
 ## Known limits
 
-- No HTTPS of its own: put the server behind a TLS reverse proxy before using logins or keys outside a lab network.
+- HTTPS is opt-in (`tls-init`): the default setup serves plain HTTP, which is only safe on one machine.
+- Agents authenticate with keys, not client certificates (mutual TLS): uvicorn does not pass the client certificate to the application, so it could not be tied to a machine the way agent keys are.
 - With only the shared `API_KEY`, any agent can report as any machine. Give each machine its own key (`AGENT_KEYS`) and set `REQUIRE_AGENT_KEYS=true`; then one machine's key can be revoked by removing its line.
 - The evidence chain proves events were not changed after they arrived, not that they were true when they arrived. The server records when each event was received and who sent it (`received_at`, `reported_by`) and flags events dated in the future; a late date is normal, because the agent spools events while the server is down.
 - The keystroke watch covers the first `TRACEFORGE_TYPING_WATCH_S` seconds after plug-in. A payload that waits longer before typing is not timed; raise the window if that matters. On Windows, two keyboards plugged in within the same window share one Raw Input registration, so only the later one is timed.

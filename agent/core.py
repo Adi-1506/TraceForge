@@ -110,11 +110,16 @@ class Sender:
     """Delivers events in order. Anything the server did not accept is kept in a
     JSON-lines spool file and retried, so events survive server outages and agent restarts."""
 
-    def __init__(self, server_url: str, api_key: str | None, spool_path: Path, session=None, timeout: float = 5):
+    def __init__(self, server_url: str, api_key: str | None, spool_path: Path, session=None, timeout: float = 5,
+                 ca_bundle: str | None = None):
         self.url = f"{server_url.rstrip('/')}/events/ingest"
         self.headers = {"X-API-Key": api_key} if api_key else {}
         self.spool_path = spool_path
         self.session = session or requests.Session()
+        # Trust the TraceForge CA (server/tls.py) for these requests only, not system-wide. Passed on each
+        # request rather than set on the session: requests lets a REQUESTS_CA_BUNDLE environment variable
+        # silently override session.verify, but never an explicit verify= argument.
+        self.request_options = {"verify": ca_bundle} if ca_bundle else {}
         self.timeout = timeout
         self.queue: deque[dict] = deque()
         if spool_path.exists():
@@ -137,7 +142,12 @@ class Sender:
         while self.queue:
             payload = self.queue[0]
             try:
-                resp = self.session.post(self.url, json=payload, headers=self.headers, timeout=self.timeout)
+                resp = self.session.post(self.url, json=payload, headers=self.headers, timeout=self.timeout, **self.request_options)
+            except requests.exceptions.SSLError as exc:
+                # Never fall back to an unverified connection: that is exactly what an impostor server wants.
+                print(f"server certificate not trusted ({exc.__class__.__name__}); set TRACEFORGE_CA_BUNDLE to the "
+                      f"TraceForge ca.crt. {len(self.queue)} event(s) spooled")
+                break
             except requests.RequestException as exc:
                 print(f"server unreachable ({exc.__class__.__name__}); {len(self.queue)} event(s) spooled")
                 break
