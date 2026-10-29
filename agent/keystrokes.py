@@ -50,6 +50,29 @@ def summarize(key_times: list[float], connected_at: float, watched_s: float) -> 
 # ---------------------------------------------------------------- Linux (evdev)
 
 
+def unavailable_reason() -> str | None:
+    """Why keystroke timing cannot work on this machine, or None if it can. Shown at agent startup
+    so a missing dependency is never mistaken for "no injection seen"."""
+    if sys.platform.startswith("linux"):
+        try:
+            import evdev  # noqa: F401
+        except ImportError:
+            return "python-evdev is not installed (pip install -r requirements-agent.txt)"
+        if not os.access("/dev/input", os.R_OK) or not any(os.access(p, os.R_OK) for p in _input_nodes()):
+            return "no permission to read /dev/input (add this user to the 'input' group, or run as root)"
+        return None
+    if sys.platform == "win32":
+        return None
+    return f"not supported on {sys.platform}"
+
+
+def _input_nodes() -> list[str]:
+    try:
+        return [os.path.join("/dev/input", n) for n in os.listdir("/dev/input") if n.startswith("event")]
+    except OSError:
+        return []
+
+
 def _is_keyboard(evdev, d) -> bool:
     """A device that can type letters. Mice also report EV_KEY (their buttons), so EV_KEY alone is not enough."""
     keys = d.capabilities().get(evdev.ecodes.EV_KEY, [])

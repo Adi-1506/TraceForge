@@ -70,6 +70,8 @@ def run() -> None:
     sender = Sender(SERVER_URL, API_KEY, SPOOL)
     print(f"TraceForge agent on {HOSTNAME} ({mode}), {len(attached)} USB device(s) attached, "
           f"{len(sender.queue)} spooled event(s). Ctrl+C to stop.")
+    if WATCH_TYPING and (why := keystrokes.unavailable_reason()):
+        print(f"WARNING: keystroke-injection (BadUSB) detection is OFF on this machine: {why}.")
     last_retry = time.monotonic()
     typing_reports: queue.Queue[dict] = queue.Queue()  # filled by watch threads, sent from this loop
     meters: dict[str, TransferMeter] = {}  # storage devices attached now -> bytes moved since they connected

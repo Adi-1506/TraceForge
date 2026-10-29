@@ -288,3 +288,23 @@ def test_mouse_buttons_are_not_counted_as_keystrokes():
     keyboard = SimpleNamespace(capabilities=lambda: {1: [28, 30, 31]})
     assert not keystrokes._is_keyboard(evdev, mouse)
     assert keystrokes._is_keyboard(evdev, keyboard)
+
+
+def test_agent_says_when_keystroke_detection_cannot_run(monkeypatch):
+    import builtins
+    import sys as _sys
+
+    from agent import keystrokes
+
+    monkeypatch.setattr(_sys, "platform", "linux")
+    real_import = builtins.__import__
+
+    def no_evdev(name, *a, **kw):
+        if name == "evdev":
+            raise ImportError
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_evdev)
+    assert "requirements-agent.txt" in keystrokes.unavailable_reason()
+    monkeypatch.setattr(_sys, "platform", "win32")
+    assert keystrokes.unavailable_reason() is None
