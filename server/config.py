@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     retrain_interval_hours: float = 0
     # A copy to a USB storage device this large is flagged (large_transfer), as is 10x its usual.
     exfil_threshold_mb: float = 500
+    # Where the trained model is saved; give real data its own file so the demo model is kept.
+    model_path: str | None = None
 
 
 settings = Settings()

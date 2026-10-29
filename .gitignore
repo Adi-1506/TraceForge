@@ -9,3 +9,4 @@ agent/pending_events.jsonl
 frontend/node_modules/
 frontend/dist/
 .claude/
+real-data/

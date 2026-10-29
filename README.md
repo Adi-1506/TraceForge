@@ -203,6 +203,21 @@ While a storage device is attached, the agent samples the OS's per-disk I/O coun
 | `RETRAIN_INTERVAL_HOURS` | `0` | scheduled retraining |
 | `TIMEZONE` | `Asia/Kolkata` | what "night" means, and the zone the dashboard shows |
 | `EXFIL_THRESHOLD_MB` | `500` | a copy this large to USB storage is flagged |
+| `MODEL_PATH` | `server/model_artifacts/iforest.joblib` | where the trained model is saved; use a separate file for real data |
+
+## Training on real data
+
+Keep real data in its own database and model so the demo stays intact. In one PowerShell window:
+
+```powershell
+$env:DATABASE_URL = "sqlite:///traceforge-real.db"
+$env:MODEL_PATH = "server/model_artifacts/real.joblib"
+.venv\Scripts\python -m server.manage import real-data\setupapi.dev.log --machine $env:COMPUTERNAME --registry real-data\usb.reg
+.venv\Scripts\uvicorn server.main:app   # keep it and the agent running for 1-2 weeks of normal use
+.venv\Scripts\python -m server.manage train
+```
+
+The model needs at least 30 connections. setupapi records only each device's first install, so most training rows come from the agent watching normal use. Connections that became part of an incident, and blocklisted devices, are left out of training. Keep `real-data\` out of git: it holds your device serials.
 
 ## Measuring the ML model
 
