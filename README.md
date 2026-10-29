@@ -60,6 +60,7 @@ set TRACEFORGE_API_KEY=<same as the server's API_KEY>
 - **Real descriptors:** it then reads the device and configuration descriptors through libusb (`pyusb` + `libusb-package`, no driver changes needed): USB version, device class, every interface (class/subclass/protocol) and every endpoint (direction, transfer type, packet size).
 - **Offline queue:** events carry the time the OS reported them. If the server is unreachable they are kept in `~/.traceforge/spool.jsonl` and retried every 10 s, in order, across restarts.
 - On Linux, reading descriptors works as a normal user; seeing events needs no extra permissions.
+- On Linux, install the agent extras for the keystroke-timing watch: `pip install -r requirements-agent.txt` (adds `evdev`, which needs the kernel headers: `apt install linux-headers-$(uname -r)` or your distro's equivalent). Without it the agent still runs and skips that watch. Windows needs nothing extra.
 
 **Tests**
 

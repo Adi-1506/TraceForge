@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-agent.txt  # server + agent extras, so agent code is tested too
       - name: Run tests
         run: python -m pytest -q
       - name: Check the rule ratings are valid OWASP options
