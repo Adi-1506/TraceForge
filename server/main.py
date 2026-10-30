@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from server import audit, integrity, models, signing, tls  # noqa: F401  (models registers tables on Base.metadata)
 from server.config import settings
 from server.database import Base, SessionLocal, engine, upgrade_schema
-from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, signing as signing_router, system
+from server.routers import anomalies, audit_log, auth, devices, events, evidence, forensics, graph, incidents, risk, rules, signing as signing_router, system
 from server.auth import current_user
 from server.scheduler import retrain_loop
 from server.security import agent_keys_configured, api_key_configured
@@ -80,7 +80,7 @@ app.add_middleware(
     expose_headers=["X-Content-SHA256", "X-Signature", "X-Signature-Algorithm", "X-Signature-Key-Id"],
 )
 
-for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, audit_log, graph, forensics, signing_router):
+for r in (events, devices, anomalies, risk, incidents, system, evidence, auth, audit_log, graph, forensics, rules, signing_router):
     app.include_router(r.router)
 
 

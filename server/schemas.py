@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field
 
+from server.detection import sigma
 from server.detection.mitre import techniques_for
 
 from server.timeutil import as_utc
@@ -65,6 +66,13 @@ class AnomalyOut(ORM):
     @property
     def mitre(self) -> list[dict]:
         return techniques_for(self.name)
+
+    @computed_field
+    @property
+    def rule(self) -> dict | None:
+        """The Sigma rule behind a rule finding (None for ML findings)."""
+        r = sigma.BY_NAME.get(self.name) if self.source == "rule" else None
+        return {"id": r.id, "title": r.title, "level": r.level, "file": r.path} if r else None
 
 
 class RiskOut(ORM):

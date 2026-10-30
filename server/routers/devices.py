@@ -33,7 +33,7 @@ def _get(db: Session, device_id: int) -> Device:
 @router.get("", response_model=list[DeviceOut])
 def list_devices(
     q: str | None = Query(default=None, description="Search term for vendor, product, serial, or device type"),
-    risk_level: str | None = Query(default=None, description="Filter by risk level (low, medium, high, critical)"),
+    risk_level: str | None = Query(default=None, description="Filter by risk level (very_low, low, moderate, high, very_high: NIST SP 800-30)"),
     known: bool | None = Query(default=None, description="Filter by known status"),
     trust_level: str | None = Query(default=None, description="Filter by trust level (trusted, suspicious, untrusted, blocklisted)"),
     db: Session = Depends(get_db),

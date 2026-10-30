@@ -1,46 +1,62 @@
-"""Weighted risk scoring: every contributing factor is recorded as the explanation.
+"""Risk scoring under NIST SP 800-30 Rev. 1 and ISO/IEC 27005, with every factor recorded as the explanation.
 
-Rule weights come from server/scoring/standards.py (OWASP Risk Rating x evidence confidence);
-each reasoning entry carries that derivation under "standard" so the dashboard and the report
-can show where a number came from.
-
-A device's risk is a property of the whole attachment, not of one event. Typing reports and the
-disconnect arrive after the connect, so they carry forward the riskiest event of the same
-attachment (its factors are copied, tagged with the event they came from) and add their own.
-Without that, a clean typing report would replace a medium-risk connect as the device's
-"latest" risk, and an injection found while typing would vanish again at unplug.
+- Each finding carries a risk value from its likelihood and impact (server/scoring/nist.py): rule
+  findings take them from their Sigma rule, ML findings from the model.
+- An event's risk is its findings' values added up, capped at 100: NIST SP 800-30 risk
+  aggregation, where several moderate risks together can make a higher one (Chapter 2, p. 13).
+  NIST discusses aggregation but does not prescribe a formula; the sum is TraceForge's choice.
+- Its level is the Table I-3 level of that value: Very Low 0-4, Low 5-20, Moderate 21-79,
+  High 80-95, Very High 96-100. A finding's value already lies in its own Table I-2 level, so an
+  event is never rated below its worst finding.
+- A device's risk belongs to the whole attachment, not to one event. Typing reports and the
+  disconnect arrive after the connect, so they carry forward the riskiest event of the same
+  attachment (its factors copied, tagged with the event they came from) and add their own.
+  Otherwise a clean typing report would replace a suspicious connect as the device's latest
+  risk, and an injection found while typing would vanish again at unplug. Carried factors are
+  not new findings, so the incident correlator's 24-hour aggregation (which sums findings) does
+  not count them twice.
 """
 
 from sqlalchemy.orm import Session
 
+from server.detection import sigma
 from server.detection.rules import Finding
 from server.models import Event, RiskScore
-from server.scoring import standards
+from server.scoring import nist
 
-BASE_SCORE = 5.0
-# Score bands. They equal standards.SEVERITY_POINTS, so a single fully confident finding of
-# OWASP severity S puts the event in level S on its own.
-LEVELS = [(75, "critical"), (50, "high"), (25, "medium"), (0, "low")]
+NO_FINDINGS = {"factor": "no_findings", "source": "system", "weight": 0.0, "explanation": "No Sigma rule or model finding matched this event."}
 
 
 def level_for(score: float) -> str:
-    return next(name for threshold, name in LEVELS if score >= threshold)
+    return nist.level_for(score)
 
 
-def _entry(f: Finding) -> dict:
+def _rating(name: str) -> dict | None:
+    """The NIST SP 800-30 assessment behind a Sigma rule finding, for the risk explanation."""
+    rule = sigma.BY_NAME.get(name)
+    if rule is None:
+        return None
+    return {
+        "rule": rule.title,
+        "sigma_level": rule.level,
+        "likelihood": rule.likelihood,
+        "likelihood_level": nist.level_for(rule.likelihood),
+        "impact": rule.impact,
+        "impact_level": nist.level_for(rule.impact),
+        "risk_level": rule.risk_level,
+        "rationale": rule.rationale,
+    }
+
+
+def _factor(f: Finding) -> dict:
     entry = {"factor": f.name, "source": f.source, "weight": f.weight, "explanation": f.explanation}
-    rating = standards.assessment(f.name, f.detail)
-    if rating is not None:
-        entry["standard"] = rating
+    if (rating := _rating(f.name)) is not None:
+        entry["nist"] = rating
     return entry
 
 
-def _baseline() -> dict:
-    return {"factor": "baseline", "source": "system", "weight": BASE_SCORE, "explanation": "Baseline risk for any USB connection."}
-
-
 def compute_score(findings: list[Finding]) -> tuple[float, list[dict]]:
-    reasoning = [_baseline()] + [_entry(f) for f in findings]
+    reasoning = [_factor(f) for f in findings] or [dict(NO_FINDINGS)]
     score = min(100.0, sum(r["weight"] for r in reasoning))
     return round(score, 1), reasoning
 
@@ -92,13 +108,12 @@ def attachment_peak(db: Session, event: Event) -> RiskScore | None:
 def score_followup_event(db: Session, event: Event, findings: list[Finding] | None = None) -> RiskScore:
     """A typing report or disconnect: the attachment's peak risk so far, plus anything found now."""
     peak = attachment_peak(db, event)
-    if peak is None:
-        reasoning = [_baseline()]
-    else:
-        reasoning = [{**r, "carried_from": r.get("carried_from", peak.event_id)} for r in peak.reasoning]
-    reasoning += [_entry(f) for f in findings or []]
+    carried = [] if peak is None else [
+        {**r, "carried_from": r.get("carried_from", peak.event_id)} for r in peak.reasoning if r["factor"] != "no_findings"
+    ]
+    reasoning = carried + [_factor(f) for f in findings or []]
     score = round(min(100.0, sum(r["weight"] for r in reasoning)), 1)
-    return _save(db, event, score, reasoning)
+    return _save(db, event, score, reasoning or [dict(NO_FINDINGS)])
 
 
 # Kept for callers that predate typing reports.

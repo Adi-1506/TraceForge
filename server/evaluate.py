@@ -30,7 +30,7 @@ from sqlalchemy.pool import StaticPool
 from server.database import Base
 from server.detection import ml_model
 from server.detection.features import build_training_matrix, extract_event_features
-from server.models import Anomaly, Event
+from server.models import Anomaly, Event, IncidentEvent
 from server.seed_synthetic_data import BASELINE, D, HID, INPUT, MASS, baseline_events, ev
 from server.services.ingest import process_event
 from server.timeutil import local_tz
@@ -114,9 +114,15 @@ def trial_events(kind: str, rng: random.Random, day: datetime):
     raise ValueError(kind)
 
 
+def opened_incident(db, ids: list[int]) -> bool:
+    """What actually alerts an investigator: any event of the trial joined an incident (NIST High,
+    from one event or from the device's findings aggregated over 24 hours)."""
+    return db.query(IncidentEvent).filter(IncidentEvent.event_id.in_(ids)).first() is not None
+
+
 def source_scores(db, event_id: int) -> dict[str, float]:
     anomalies = db.query(Anomaly).filter(Anomaly.event_id == event_id).all()
-    total = lambda src: min(100.0, 5.0 + sum(a.weight for a in anomalies if src is None or a.source == src))
+    total = lambda src: min(100.0, sum(a.weight for a in anomalies if src is None or a.source == src))
     return {"hybrid": total(None), "rules": total("rule"), "ml": total("ml")}
 
 
@@ -173,7 +179,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--trials", type=int, default=8, help="trials per scenario")
-    parser.add_argument("--thresholds", type=float, nargs="+", default=[25.0, 40.0])
+    parser.add_argument("--thresholds", type=float, nargs="+", default=[21.0, 80.0])
     parser.add_argument("--show-misses", action="store_true", help="list attack trials the hybrid detector missed")
     args = parser.parse_args()
 
@@ -200,6 +206,15 @@ def report(sim, args) -> None:
             print(f"{label:<38}" + "".join(f"{c:>16}" for c in row))
         row = [pct(sum(scores[i][det] >= threshold for i in normal), len(normal)) for det in ("hybrid", "rules", "ml")]
         print(f"{'held-out normal (false alarm rate)':<38}" + "".join(f"{c:>16}" for c in row) + "\n")
+
+    # What actually reaches an investigator: an incident (NIST High from one event, or from the
+    # device's findings aggregated over 24 hours, server/incidents/correlate.py).
+    print("== Opened an incident (what alerts an investigator) " + "=" * 26)
+    for kind in ATTACKS + BENIGN_KINDS:
+        group = [ids for k, ids in trials if k == kind]
+        label = kind + ("  [should NOT alert]" if kind in BENIGN_KINDS else "")
+        print(f"{label:<38}{pct(sum(opened_incident(db, ids) for ids in group), len(group)):>16}")
+    print(f"{'held-out normal (false alarm rate)':<38}{pct(sum(opened_incident(db, [i]) for i in normal), len(normal)):>16}\n")
 
     if args.show_misses:
         threshold = max(args.thresholds)

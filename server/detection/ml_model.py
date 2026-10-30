@@ -19,6 +19,7 @@ from server.detection.features import (
     extract_event_features,
 )
 from server.detection.rules import Finding
+from server.scoring import nist
 from server.models import Event
 
 MODEL_PATH = Path(__file__).resolve().parent.parent / "model_artifacts" / "iforest.joblib"
@@ -29,7 +30,12 @@ THRESHOLD_PERCENTILE = 3
 SEVERITY_SPAN = 0.15  # Isolation Forest: how far below the threshold counts as maximum severity
 OCSVM_NU = 0.05  # upper bound on the share of training points the One-Class SVM treats as outliers
 BACKGROUND_ROWS = 50  # training rows kept for the One-Class SVM's SHAP explainer
-MAX_WEIGHT = 45.0
+# Model findings are risk-assessed like Sigma rule findings (NIST SP 800-30, server/scoring/nist.py):
+# impact Moderate (unusual use of a known device), and a likelihood that grows with how far past the
+# model's threshold the connection is, from Low to the top of Moderate; an unseen value is Moderate.
+ML_IMPACT = 60.0
+MIN_LIKELIHOOD, MAX_LIKELIHOOD = 20.0, 79.0
+NOVEL_LIKELIHOOD = 50.0
 
 _bundle: dict | None = None
 
@@ -145,7 +151,6 @@ def _describe(name: str, value: float, median: float) -> str:
     return f"{label} was {value:.0f} vs a typical {median:.0f}"
 
 
-NOVEL_WEIGHT = 30.0
 # How far outside the training range (as a fraction of that range) a value must be to count as unseen.
 NOVEL_MARGIN = 1.0
 
@@ -168,7 +173,7 @@ def _novelty(bundle: dict, x: np.ndarray) -> list[Finding]:
         Finding(
             "ml",
             "unseen_behaviour",
-            NOVEL_WEIGHT,
+            nist.risk_value(NOVEL_LIKELIHOOD, ML_IMPACT),
             "Behaviour outside anything in the training baseline: " + "; ".join(texts) + ".",
             {"features": [FEATURE_NAMES[i] for i in novel], "values": [round(float(x[0][i]), 3) for i in novel]},
         )
@@ -210,7 +215,8 @@ def detect(db: Session, event: Event) -> list[Finding]:
         for i in top
     ]
     severity = min(1.0, (threshold - score) / bundle.get("span", SEVERITY_SPAN))
-    weight = round(15 + (MAX_WEIGHT - 15) * severity, 1)
+    likelihood = MIN_LIKELIHOOD + (MAX_LIKELIHOOD - MIN_LIKELIHOOD) * severity
+    weight = nist.risk_value(likelihood, ML_IMPACT)
     why = "; ".join(d["text"] for d in drivers) or "overall behaviour deviates from the learned baseline"
     return [
         Finding(

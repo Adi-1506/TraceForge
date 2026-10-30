@@ -19,7 +19,7 @@ def anomaly_names(client, device_id):
 def test_programmable_board_typing_as_a_keyboard_is_flagged(client):
     out = post(client, vid="16D0", pid="0753", serial=None, dtype="USB Input Device", descriptor=HID)
     assert "programmable_hid_board" in anomaly_names(client, out["event"]["device_id"])
-    assert out["risk_level"] in ("high", "critical")
+    assert out["risk_level"] in ("high", "very_high")
 
 
 def test_programmable_board_used_as_a_serial_port_is_not_flagged(client):
@@ -168,7 +168,7 @@ def test_trusted_device_may_roam_but_a_changed_descriptor_is_still_caught(client
 
     tampered = post(client, machine="PC-2", dtype="USB Input Device", descriptor=HID, ts="2026-09-03T10:00:00Z")
     assert {"device_type_mismatch", "descriptor_mismatch"} <= anomaly_names(client, 1)
-    assert roam["risk_level"] == "low" and tampered["risk_level"] in ("high", "critical")
+    assert roam["risk_level"] == "very_low" and tampered["risk_level"] in ("high", "very_high")
 
 
 def test_trust_override_is_validated(client):

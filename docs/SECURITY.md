@@ -76,10 +76,11 @@ Together with the hash chain this gives the CIA triad the Lab 6 extra exercise a
 ### Lab 8: Intrusion detection (the Snort exercise)
 
 TraceForge is a host-based intrusion detection system for USB, built on the same two ideas as Snort:
-**signature rules** (`server/detection/rules.py`: known-bad patterns such as a storage stick that starts
+**signature rules** (`server/detection/sigma_rules/*.yml`: known-bad patterns such as a storage stick that starts
 typing, or a programmable attack board) and **anomaly detection** (`server/detection/ml_model.py`:
 Isolation Forest over each device's behaviour). Snort inspects network packets; TraceForge inspects USB
-devices and what they do. Risk is scored with the OWASP Risk Rating Methodology (see [STANDARDS.md](STANDARDS.md)).
+devices and what they do. Its rules are written in Sigma, the open format SIEMs use for the same purpose, and
+risk is assessed with NIST SP 800-30 (see [STANDARDS.md](STANDARDS.md)).
 
 ## Other defences
 

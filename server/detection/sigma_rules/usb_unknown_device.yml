@@ -1,0 +1,32 @@
+title: Never-Seen-Before USB Device Connected
+id: 9c1c0adf-6af9-4e22-a5d2-480905093829
+name: unknown_device
+status: test
+description: |
+  A USB device whose VID/PID/serial identity has never been seen on any monitored machine is
+  connected. SigmaHQ rates any USB plug-in as low; a first sighting of the identity is one step
+  more specific, so it is rated medium.
+references:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/driverframeworks/win_usb_device_plugged.yml
+  - https://attack.mitre.org/techniques/T1200/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-28
+tags:
+  - attack.initial-access
+  - attack.t1200
+logsource:
+  product: traceforge
+  category: usb_connect
+detection:
+  selection:
+    device.first_seen: true
+  condition: selection
+falsepositives:
+  - New peripherals bought or issued to staff
+  - Visitors' devices
+level: medium
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 30
+  impact: 85
+  rationale: >-
+    Likelihood Moderate (G-4: somewhat likely to cause harm; most new devices are legitimate peripherals). Impact High (H-3: an implanted device can take over the machine it is plugged into, a severe adverse effect).

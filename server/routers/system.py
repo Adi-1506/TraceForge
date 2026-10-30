@@ -28,7 +28,7 @@ def stats(db: Session = Depends(get_db)):
         .subquery()
     )
     high_risk = (
-        db.query(func.count()).select_from(ranked).filter(ranked.c.rank == 1, ranked.c.level.in_(["high", "critical"])).scalar()
+        db.query(func.count()).select_from(ranked).filter(ranked.c.rank == 1, ranked.c.level.in_(["high", "very_high"])).scalar()
     )
     return StatsOut(
         devices=db.query(func.count(Device.id)).scalar(),
@@ -62,23 +62,3 @@ def ml_train(db: Session = Depends(get_db), who: str = Depends(admin_or_api_key)
     db.commit()
     return status
 
-
-@router.get("/standards", dependencies=[Depends(current_user)])
-def scoring_standards():
-    """How every rule weight is derived: OWASP Risk Rating of the attack it indicates x evidence confidence."""
-    from server.scoring import risk, standards
-
-    return {
-        "method": "weight = evidence confidence x points for the OWASP severity of the indicated attack",
-        "severity_points": standards.SEVERITY_POINTS,
-        "levels": {name: threshold for threshold, name in risk.LEVELS},
-        "attack_classes": [
-            {
-                "key": a.key, "title": a.title, "techniques": list(a.techniques),
-                "likelihood_factors": a.likelihood, "impact_factors": a.impact,
-                "likelihood": a.likelihood_score, "impact": a.impact_score, "severity": a.severity, "rationale": a.why,
-            }
-            for a in standards.ATTACKS.values()
-        ],
-        "findings": standards.table(),
-    }

@@ -1,19 +1,17 @@
 """The full pipeline for one USB event: persist -> detect -> score -> correlate."""
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from server import integrity
 from server.detection import fingerprint, ml_model
-from server.detection.rules import Finding, check_keystroke_injection, check_large_transfer, run_rules
+from server.detection.rules import Finding, check_event_time, check_keystroke_injection, check_large_transfer, run_rules
 from server.incidents.correlate import correlate
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import EventIngest
 from server.scoring.risk import score_connect_event, score_followup_event
-from server.scoring.standards import weight
-from server.timeutil import as_utc
 
 
 @dataclass
@@ -63,29 +61,6 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
     return device, True
 
 
-FUTURE_TOLERANCE = timedelta(minutes=5)  # agent clocks drift a little; beyond this a date in the future is wrong
-
-
-def check_future_timestamp(event: Event, received_at: datetime, source: str | None) -> list[Finding]:
-    """An event dated after the server received it. Late events are normal (the agent spools while the
-    server is down), so only the future is suspicious: a wrong agent clock or a forged report."""
-    if source is not None:  # imported evidence is dated by the seized machine's log, not a live clock
-        return []
-    ahead = as_utc(event.timestamp) - received_at
-    if ahead <= FUTURE_TOLERANCE:
-        return []
-    return [
-        Finding(
-            "rule",
-            "future_timestamp",
-            weight("future_timestamp"),
-            f"The agent dated this event {ahead.total_seconds() / 60:.0f} minutes after the server received it. "
-            "Either the agent machine's clock is wrong or the report was forged; the timeline around it is unreliable.",
-            {"ahead_s": round(ahead.total_seconds()), "received_at": received_at.isoformat()},
-        )
-    ]
-
-
 def process_event(db: Session, payload: EventIngest, reported_by: str | None = None) -> IngestOutcome:
     with integrity.chain_lock:
         return _process(db, payload, reported_by)
@@ -115,7 +90,7 @@ def _process(db: Session, payload: EventIngest, reported_by: str | None) -> Inge
     db.flush()
     integrity.link(db, event)
 
-    findings = check_future_timestamp(event, received_at, payload.source)
+    findings = check_event_time(event, received_at, imported=payload.source is not None)
     if payload.event_type == "connect":
         findings += run_rules(db, device=device, machine=machine, event=event, payload=payload, is_new_device=is_new_device)
         findings += ml_model.detect(db, event)

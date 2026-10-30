@@ -59,9 +59,7 @@ def test_new_unit_with_structure_unlike_its_model_is_flagged(client):
     assert "descriptor_model_mismatch" in found
     # It also replaced a unit of the same model on the same machine within 24 hours: a lookalike swap.
     assert "same_model_new_serial" in found
-    # Three identity-spoofing indicators corroborate each other. Spoofing is an OWASP "High" attack
-    # class (server/scoring/standards.py), so the score lands at the top of the high band.
-    assert out["risk_level"] == "high" and out["risk_score"] >= 70
+    assert out["risk_level"] == "very_high"
 
 
 def test_known_device_changing_structure_is_flagged(client):

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, saveFile, usePolling, verifySignature } from "../api.js";
 import RiskBadge from "./RiskBadge.jsx";
+import { riskLabel, riskTone } from "../risk.js";
 import Timeline from "./Timeline.jsx";
 import TrustBadge from "./TrustBadge.jsx";
 
@@ -201,7 +202,7 @@ function TrustSection({ device, onChanged }) {
 
 function RiskBreakdown({ history }) {
   // The device's current risk. Typing reports and disconnects carry their attachment's factors
-  // (tagged carried_from); rows stored before that only say "inherited", so skip those.
+  // (tagged carried_from); rows stored by older versions only say "inherited", so skip those.
   const latest = history?.find((h) => h.reasoning[0]?.factor !== "inherited");
   if (!latest) return null;
   return (
@@ -216,7 +217,7 @@ function RiskBreakdown({ history }) {
             <div>
               <div className="mono">
                 {r.factor}
-                {r.carried_from && r.factor !== "baseline" && (
+                {r.carried_from && (
                   <span className="muted small">
                     {" "}
                     (from event #{r.carried_from})
@@ -224,7 +225,7 @@ function RiskBreakdown({ history }) {
                 )}
               </div>
               <div className="muted small">{r.explanation}</div>
-              {r.standard && <StandardLine s={r.standard} />}
+              {r.nist && <NistLine n={r.nist} />}
             </div>
           </li>
         ))}
@@ -233,21 +234,16 @@ function RiskBreakdown({ history }) {
   );
 }
 
-function StandardLine({ s }) {
-  // How the weight was derived: OWASP Risk Rating of the indicated attack x evidence confidence.
+function NistLine({ n }) {
+  // The Sigma rule's NIST SP 800-30 assessment: likelihood x impact, Table I-2 level of risk.
+  const label = (level) => riskLabel(level).replace(/^./, (c) => c.toUpperCase());
   return (
-    <div className="standard-line small" title={s.attack}>
-      <span className={`owasp owasp-${s.severity.toLowerCase()}`}>
-        OWASP {s.severity}
-      </span>
+    <div className="standard-line small" title={n.rationale}>
+      <span className={`rating rating-${riskTone(n.risk_level)}`}>NIST {label(n.risk_level)}</span>
       <span>
-        likelihood {s.likelihood} ({s.likelihood_level}) x impact {s.impact} (
-        {s.impact_level})
+        likelihood {n.likelihood} ({label(n.likelihood_level)}) x impact {n.impact} ({label(n.impact_level)})
       </span>
-      <span>
-        confidence {s.confidence} x {s.severity_points} pts
-      </span>
-      {s.standard && <span className="muted">{s.standard}</span>}
+      <span className="muted">Sigma: {n.rule}</span>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-"""Regression tests for the review fixes and the standards-based scoring.
+"""Regression tests for the review fixes, ported onto the Sigma + NIST SP 800-30 scoring.
 
 Each test names the flaw it pins down, so a failure says which fix regressed.
 """
@@ -14,7 +14,7 @@ from server import auth
 from server.config import settings
 from server.database import SessionLocal
 from server.detection.rules import check_keystroke_injection
-from server.scoring import risk, standards
+from server.detection import sigma
 from tests.conftest import HID, make_event
 
 
@@ -68,7 +68,7 @@ def test_injection_found_while_typing_survives_the_disconnect(client):
     post(client, **KB, ts="2026-09-02T03:00:00Z")
     typed = client.post("/events/ingest", json=typing_event(ducky_with_delays(), **KB, ts="2026-09-02T03:00:31Z")).json()
     gone = post(client, **KB, kind="disconnect", ts="2026-09-02T03:05:00Z")
-    assert typed["risk_level"] in ("high", "critical")
+    assert typed["risk_level"] in ("high", "very_high")
     assert gone["risk_score"] == typed["risk_score"]  # the unplug no longer drops back to the connect's score
     factors = [r["factor"] for r in client.get(f"/risk-scores/{gone['event']['device_id']}").json()[0]["reasoning"]]
     assert "keystroke_injection" in factors
@@ -125,7 +125,7 @@ def test_high_risk_tile_uses_each_devices_current_risk(client):
     assert client.get("/stats").json()["high_risk_devices"] == 1
     # Next day it comes back as the storage stick it always was: its current risk is low again.
     calm = post(client, ts="2026-09-03T10:00:00Z")
-    assert calm["risk_level"] == "low"
+    assert calm["risk_level"] in ("very_low", "low")
     assert client.get("/stats").json()["high_risk_devices"] == 0  # the old code still counted it
 
 
@@ -220,44 +220,26 @@ def test_successful_login_clears_the_failure_count(secured):
 # --- Standards-based scoring ---------------------------------------------------------------------
 
 
-def test_every_rating_uses_only_owasp_option_values():
-    for a in standards.ATTACKS.values():
-        for f, v in {**a.likelihood, **a.impact}.items():
-            assert v in standards.ALLOWED[f]
+def test_keystroke_rule_in_the_sigma_file_has_the_burst_condition():
+    rule = sigma.BY_NAME["keystroke_injection"]
+    doc = {"typing.keys": 150, "typing.median_gap_ms": 10, "typing.rate_per_s": 19.9, "typing.gap_cv": 6.9,
+           "typing.burst_fraction": 0.987, "typing.burst_gaps": 147}
+    assert rule.matches(doc)
+    assert not rule.matches({**doc, "typing.burst_gaps": 10})  # a few fast gaps alone are not enough
 
 
-def test_rule_weight_is_confidence_times_owasp_severity_points():
-    for name, ind in standards.INDICATORS.items():
-        sev = standards.ATTACKS[ind.attack].severity
-        assert standards.weight(name) == round(ind.confidence * standards.SEVERITY_POINTS[sev], 1)
+def test_future_timestamp_is_a_sigma_rule_for_every_event_type():
+    rule = sigma.BY_NAME["future_timestamp"]
+    assert rule.category == "usb_event" and rule.risk_level == "moderate" and rule.techniques == ["T1070.006"]
 
 
-def test_one_fully_confident_finding_lands_in_its_own_owasp_level():
-    for sev, points in standards.SEVERITY_POINTS.items():
-        if sev == "Note":
-            continue
-        assert risk.level_for(risk.BASE_SCORE + points) == sev.lower()
-
-
-def test_owasp_severity_matrix_is_the_published_one():
-    assert standards.MATRIX[("HIGH", "HIGH")] == "Critical"
-    assert standards.MATRIX[("LOW", "LOW")] == "Note"
-    assert standards.MATRIX[("HIGH", "MEDIUM")] == standards.MATRIX[("MEDIUM", "HIGH")] == "High"
-    assert standards.band(2.99) == "LOW" and standards.band(3) == "MEDIUM" and standards.band(6) == "HIGH"
-
-
-def test_risk_explanation_shows_where_each_weight_came_from(client):
+def test_risk_explanation_shows_the_nist_rating_of_each_rule(client):
     out = post(client)
     reasoning = client.get(f"/risk-scores/{out['event']['device_id']}").json()[0]["reasoning"]
     unknown = next(r for r in reasoning if r["factor"] == "unknown_device")
-    assert unknown["standard"]["severity"] == "Critical" and unknown["standard"]["confidence"] == 0.3
-    assert "MP-7" in unknown["standard"]["standard"]
-
-
-def test_standards_endpoint_lists_every_rated_finding(client):
-    body = client.get("/standards").json()
-    assert {f["finding"] for f in body["findings"]} == set(standards.INDICATORS)
-    assert body["levels"]["critical"] == 75
+    rule = sigma.BY_NAME["unknown_device"]
+    assert unknown["nist"]["likelihood"] == rule.likelihood and unknown["nist"]["impact"] == rule.impact
+    assert unknown["nist"]["risk_level"] == rule.risk_level and unknown["weight"] == rule.risk
 
 
 def test_security_status_lists_development_defaults(client):
@@ -308,3 +290,15 @@ def test_agent_says_when_keystroke_detection_cannot_run(monkeypatch):
     assert "requirements-agent.txt" in keystrokes.unavailable_reason()
     monkeypatch.setattr(_sys, "platform", "win32")
     assert keystrokes.unavailable_reason() is None
+
+
+def test_exfiltration_found_at_disconnect_lowers_device_trust(client):
+    """Exfiltration is only detected when the stick is unplugged; trust used to ignore disconnects."""
+    gb = 1024 ** 3
+    post(client, ts="2026-09-01T10:00:00Z")
+    out = client.post("/events/ingest", json={**make_event(kind="disconnect", ts="2026-09-01T23:30:00Z"),
+                                               "transfer": {"bytes_written": 3 * gb, "bytes_read": 0, "duration_s": 600}}).json()
+    assert out["risk_level"] in ("high", "very_high")
+    factors = client.get(f"/devices/{out['event']['device_id']}").json()["trust_factors"]
+    recent = next(f for f in factors if f["factor"] == "recent_risk")
+    assert str(int(out["risk_score"])) in recent["explanation"]

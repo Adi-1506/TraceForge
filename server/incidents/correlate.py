@@ -1,5 +1,11 @@
 """Group related suspicious events into incidents, and incidents into cross-machine cases.
 
+0. What opens an incident: risk at NIST SP 800-30 Rev. 1 level High or above (Table I-3: a severe
+   or catastrophic adverse effect), either
+   - from one event, or
+   - aggregated over one device's findings within RISK_WINDOW (risk aggregation, Chapter 2, p. 13:
+     several lower risks that materialise together can make a higher one), so Low and Moderate
+     findings that are harmless alone still escalate together.
 1. Per machine: an event joins an active incident on its machine that ended within WINDOW when
    either it involves a device already in the incident, or it is itself suspicious (two devices,
    one compromise). Ordinary low-risk events from other devices are never dragged in.
@@ -13,10 +19,14 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from server.models import Device, Event, Incident, IncidentEvent, RiskScore
+from sqlalchemy import func
+
+from server.models import Anomaly, Device, Event, Incident, IncidentEvent, RiskScore
+from server.scoring import nist
 from server.timeutil import as_utc
 
-INCIDENT_THRESHOLD = 40.0  # a connection scoring this high opens an incident
+INCIDENT_RISK = float(nist.SCALE["high"][0])  # NIST "High": one event, or a device's findings in RISK_WINDOW
+RISK_WINDOW = timedelta(hours=24)
 WINDOW = timedelta(minutes=30)  # events within this gap of the last one join the incident
 CASE_WINDOW = timedelta(hours=24)  # incidents on other machines this close in time join the case
 ACTIVE = ("open", "investigating")  # resolved incidents stop collecting events
@@ -110,14 +120,33 @@ def _include_preceding_connect(db: Session, incident: Incident, event: Event, ts
         incident.start_time = min(as_utc(incident.start_time), as_utc(connect.timestamp))
 
 
+def accumulated_risk(db: Session, event: Event, ts) -> float:
+    """Risk of every finding about this event's device in the RISK_WINDOW up to it, added up.
+    Only findings count: a disconnect's inherited score is the same risk, not new risk."""
+    own = db.query(func.count(Anomaly.id)).filter(Anomaly.event_id == event.id).scalar()
+    if not own:
+        return 0.0
+    total = (
+        db.query(func.coalesce(func.sum(Anomaly.weight), 0.0))
+        .join(Event, Event.id == Anomaly.event_id)
+        .filter(Event.device_id == event.device_id, Event.timestamp > ts - RISK_WINDOW, Event.timestamp <= ts)
+        .scalar()
+    )
+    return float(total)
+
+
+def is_suspicious(db: Session, event: Event, risk: RiskScore, ts) -> bool:
+    return risk.score >= INCIDENT_RISK or accumulated_risk(db, event, ts) >= INCIDENT_RISK
+
+
 def correlate(db: Session, event: Event, risk: RiskScore) -> Incident | None:
     ts = as_utc(event.timestamp)
-    suspicious = risk.score >= INCIDENT_THRESHOLD
+    suspicious = is_suspicious(db, event, risk, ts)
     incident = _find_incident(db, event, suspicious)
 
     if incident is None:
         others = cross_machine_incidents(db, event, ts) if event.event_type == "connect" else []
-        if risk.score < INCIDENT_THRESHOLD and not others:
+        if not suspicious and not others:
             return None
         incident = Incident(
             device_id=event.device_id,

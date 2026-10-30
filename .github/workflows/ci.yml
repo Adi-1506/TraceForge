@@ -19,10 +19,10 @@ jobs:
         run: pip install -r requirements-agent.txt  # server + agent extras, so agent code is tested too
       - name: Run tests
         run: python -m pytest -q
-      - name: Check the rule ratings are valid OWASP options
-        run: python -c "import server.scoring.standards"
+      - name: Validate the Sigma rules (format, NIST SP 800-30 ratings, ATT&CK tags)
+        run: python -c "from server.detection import sigma; print(len(sigma.RULES), 'Sigma rules OK')"
       - name: Detection quality on the synthetic scenarios
-        run: python -m server.evaluate --thresholds 40
+        run: python -m server.evaluate
 
   dashboard:
     name: Dashboard build
