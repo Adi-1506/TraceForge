@@ -243,6 +243,12 @@ When a new device presents a keyboard, the agent records **when** its keys go do
 - a median gap under 30 ms with almost no variation,
 - 15+ gaps under 20 ms making up at least half the typing. This one catches Rubber Ducky scripts that pause between bursts with `DELAY`, which drags the overall rate down and the variation up so the first two miss them.
 
+**How far must an attacker go to evade this?** `python -m server.evasion` plays slow-down, chunking
+and wait-out-the-window strategies against the real agent summary and Sigma rule: chunked `DELAY` payloads
+are always caught, but typing just under 25 keys/s (13.4 s for a 300-key payload, 10x slower) or waiting
+30 s after plug-in evades. Results, two measured countermeasures and why connect-time rules still catch the
+device are in [docs/EVASION.md](docs/EVASION.md).
+
 Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
 
 ## Data exfiltration watch
