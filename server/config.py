@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # Failed logins allowed per username (and per client address) in the window before /auth/login returns 429.
     login_max_failures: int = 5
     login_window_minutes: float = 15
+    # Where the trained model is saved; give real data its own file so the demo model is kept.
+    model_path: str | None = None
 
 
 settings = Settings()

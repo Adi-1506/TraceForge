@@ -13,3 +13,4 @@ frontend/dist/
 *.pem
 # TLS certificates and keys from tls-init
 certs/
+real-data/

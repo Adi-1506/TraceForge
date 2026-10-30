@@ -5,6 +5,7 @@
     python -m server.manage agent-key LAB-PC-01                       (a key that may only report for that machine)
     python -m server.manage tls-init --host 192.168.1.20              (local CA + HTTPS certificate)
     python -m server.manage import setupapi.dev.log --machine SEIZED-PC [--registry usb.reg] [--dry-run]
+    python -m server.manage train                                     (trains the ML model on stored history)
 """
 
 import argparse
@@ -59,6 +60,31 @@ def run_import(args) -> None:
         print(f"warning: {w}")
 
 
+def run_train() -> None:
+    from sqlalchemy import func
+
+    from server.database import upgrade_schema
+    from server.detection import ml_model
+    from server.models import Device, Event, Machine
+
+    Base.metadata.create_all(bind=engine)
+    upgrade_schema()
+    with SessionLocal() as db:
+        connects = db.query(func.count(Event.id)).filter(Event.event_type == "connect").scalar()
+        devices = db.query(func.count(Device.id)).scalar()
+        machines = db.query(func.count(Machine.id)).scalar()
+        print(f"Database: {engine.url.render_as_string(hide_password=True)}")
+        print(f"History: {connects} connection(s) from {devices} device(s) on {machines} machine(s).")
+        try:
+            status = ml_model.train(db)
+        except ValueError as exc:
+            raise SystemExit(f"{exc} Keep the agent running and train again later.")
+        audit.record(db, "cli", "ml.train", rows=status["training_rows"], excluded=status["excluded_rows"], algorithm=status["algorithm"])
+        db.commit()
+    print(f"Trained {status['algorithm']} on {status['training_rows']} connection(s); left out {status['excluded_rows']} from incidents or blocklisted devices.")
+    print(f"Model saved to {ml_model.MODEL_PATH}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m server.manage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -79,6 +105,7 @@ def main() -> None:
     im.add_argument("--year", type=int, default=2026, help="year for syslog lines, which carry none")
     im.add_argument("--registry", help="optional .reg export to fill in device types")
     im.add_argument("--dry-run", action="store_true", help="parse and list what would be imported")
+    sub.add_parser("train", help="train the behavioural model on the connections stored so far")
     args = parser.parse_args()
 
     if args.command == "create-user":
@@ -115,6 +142,8 @@ def main() -> None:
         print(f"On {args.hostname}:   TRACEFORGE_API_KEY={key}")
         print(f"Add to AGENT_KEYS:  {args.hostname}={hashlib.sha256(key.encode()).hexdigest()}")
         print("Entries are comma-separated. Set REQUIRE_AGENT_KEYS=true once every agent has its own key.")
+    elif args.command == "train":
+        run_train()
     else:
         key = getpass.getpass("API key to hash (leave empty to generate one): ") or secrets.token_urlsafe(32)
         print(f"Give agents:      TRACEFORGE_API_KEY={key}")
